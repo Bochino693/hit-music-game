@@ -1,1 +1,1 @@
-extends "res://scripts/hit_music_r7/selector_v10.gd"
+extends "res://scripts/hit_music_r7/selector_v11.gd"
