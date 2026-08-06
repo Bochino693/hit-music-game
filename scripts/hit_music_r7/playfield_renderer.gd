@@ -1,6 +1,6 @@
 extends Node2D
 
-# HIT MUSIC R11 FINAL - GEOMETRIA, BRILHO E HOLD CRISTALINO
+# HIT MUSIC R12 - LEITURA LIMPA, HOLD ARCADE E AMBIENTE REFINADO
 
 const PATH_BUILDER: Script = preload("res://scripts/hit_music_r7/path_builder.gd")
 
@@ -15,6 +15,8 @@ var game_state: String = "presentation"
 var pointer_position: Vector2 = Vector2.ZERO
 var pointer_active: bool = false
 var effects: Array = []
+var _hit_energy: float = 0.0
+var _combo_energy: float = 0.0
 
 var _video_style: StyleBoxFlat
 var _video_inner_style: StyleBoxFlat
@@ -67,13 +69,14 @@ func set_runtime(
 
 
 func add_effect(kind: String, position_value: Vector2, color: Color) -> void:
+	# O erro continua afetando combo e performance, mas nao cobre a proxima nota.
+	if kind == "miss":
+		return
 	var duration: float = 0.68
 	if kind == "slide":
 		duration = 0.78
 	elif kind == "hold":
 		duration = 0.88
-	elif kind == "miss":
-		duration = 0.48
 
 	effects.append({
 		"kind": kind,
@@ -86,7 +89,17 @@ func add_effect(kind: String, position_value: Vector2, color: Color) -> void:
 	queue_redraw()
 
 
-func _process(_delta: float) -> void:
+func register_hit(quality: float, combo: int) -> void:
+	# Um unico impulso alimenta fundo, bolinhas e anel. Sem nodes temporarios.
+	var carmine_boost: float = 1.22 if str(song.get("id", "")) == "carmine" else 1.0
+	_hit_energy = minf(1.0, _hit_energy + (0.30 + quality * 0.30) * carmine_boost)
+	_combo_energy = clampf(float(combo) / 40.0, 0.0, 1.0)
+	queue_redraw()
+
+
+func _process(delta: float) -> void:
+	_hit_energy = move_toward(_hit_energy, 0.0, delta * 2.65)
+	_combo_energy = move_toward(_combo_energy, 0.0, delta * 0.16)
 	var now: float = float(Time.get_ticks_msec()) / 1000.0
 	for index in range(effects.size() - 1, -1, -1):
 		var effect: Dictionary = effects[index]
@@ -103,6 +116,7 @@ func _draw() -> void:
 
 	_draw_circle_base()
 	_draw_theme_geometry()
+	_draw_ambient_particles()
 	_draw_inner_technical_rings()
 	_draw_ring()
 	_draw_lane_energy()
@@ -194,22 +208,24 @@ func _draw_theme_geometry() -> void:
 	)
 	var rotation: float = time_value * speed
 	var beat: float = _beat_pulse()
+	var reaction: float = _hit_energy + _combo_energy * 0.32
 	var primary: Color = _primary()
 	var secondary: Color = _secondary()
 	var accent: Color = _accent()
 
 	# Fundo totalmente geometrico: sem arcos cortados.
 	# Cada camada forma uma mandala completa de cristais.
-	for layer in range(1, 7):
+	for layer in range(1, 6):
 		var layer_radius: float = radius * (
 			0.10 + float(layer) * 0.115
 		)
-		var count: int = 8 + layer * 2
+		layer_radius += sin(time_value * 3.2 + float(layer)) * radius * 0.010 * reaction
+		var count: int = 6 + layer * 2
 		var direction_sign: float = (
 			1.0 if layer % 2 == 0 else -1.0
 		)
 		var layer_rotation: float = (
-			rotation * direction_sign * (0.35 + float(layer) * 0.04)
+			rotation * direction_sign * (0.35 + float(layer) * 0.04 + reaction * 0.20)
 		)
 
 		for index in range(count):
@@ -234,10 +250,7 @@ func _draw_theme_geometry() -> void:
 				accent,
 				mix_value * 0.55
 			)
-			color.a = (
-				intensity * (0.34 + float(layer) * 0.035)
-				+ beat * 0.035
-			)
+			color.a = intensity * (0.20 + float(layer) * 0.024) + beat * 0.018 + reaction * 0.055
 
 			match configured_pattern:
 				"hex":
@@ -307,7 +320,7 @@ func _draw_theme_geometry() -> void:
 			petal_position,
 			radius * (0.050 + beat * 0.006),
 			petal_angle + PI * 0.25,
-			Color(primary.r, primary.g, primary.b, 0.30),
+			Color(primary.r, primary.g, primary.b, 0.16),
 			maxf(2.0, radius * 0.0040)
 		)
 
@@ -316,7 +329,7 @@ func _draw_theme_geometry() -> void:
 		radius * (0.095 + beat * 0.008),
 		8,
 		rotation * 0.28,
-		Color(secondary.r, secondary.g, secondary.b, 0.28),
+		Color(secondary.r, secondary.g, secondary.b, 0.16),
 		maxf(2.0, radius * 0.0042)
 	)
 	_draw_regular_polygon(
@@ -324,9 +337,30 @@ func _draw_theme_geometry() -> void:
 		radius * (0.062 + beat * 0.006),
 		6,
 		-rotation * 0.45,
-		Color(accent.r, accent.g, accent.b, 0.42),
+		Color(accent.r, accent.g, accent.b, 0.24),
 		maxf(2.0, radius * 0.0045)
 	)
+
+
+func _draw_ambient_particles() -> void:
+	# Particulas deterministicas em tres profundidades: detalhadas e leves.
+	var time_value: float = _idle_time()
+	var beat: float = _beat_pulse()
+	var palette: Array[Color] = [_primary(), _secondary(), _accent()]
+	for index in range(42):
+		var seed: float = float(index) * 12.9898
+		var depth: float = 0.35 + float(index % 3) * 0.27
+		var base_angle: float = fmod(absf(sin(seed) * 43758.5453), TAU)
+		var orbit: float = radius * (0.16 + fmod(absf(cos(seed * 0.73)) * 9.7, 0.70))
+		var direction_sign: float = -1.0 if index % 2 == 0 else 1.0
+		var angle: float = base_angle + time_value * (0.018 + depth * 0.022) * direction_sign
+		var drift: float = sin(time_value * (0.32 + depth * 0.16) + seed) * radius * 0.012
+		var particle_position: Vector2 = center + Vector2(cos(angle), sin(angle)) * (orbit + drift)
+		var particle_color: Color = palette[index % palette.size()]
+		var twinkle: float = 0.5 + 0.5 * sin(time_value * (1.2 + depth) + seed)
+		var size: float = radius * (0.0018 + depth * 0.0022 + beat * 0.0008)
+		draw_circle(particle_position, size * 2.8, Color(particle_color.r, particle_color.g, particle_color.b, 0.025 + twinkle * 0.025), true)
+		draw_circle(particle_position, size, Color(particle_color.r, particle_color.g, particle_color.b, 0.20 + twinkle * 0.38), true)
 
 func _draw_diamond_field(
 	rotation: float,
@@ -439,6 +473,9 @@ func _draw_inner_technical_rings() -> void:
 	var time_value: float = _idle_time()
 	var primary: Color = _primary()
 	var accent: Color = _accent()
+	var reaction: float = _hit_energy + _combo_energy * 0.34
+	var carmine_factor: float = 1.30 if str(song.get("id", "")) == "carmine" else 1.0
+	reaction *= carmine_factor
 
 	# Substitui os antigos segmentos redondos por molduras poligonais.
 	for layer in range(3):
@@ -446,8 +483,9 @@ func _draw_inner_technical_rings() -> void:
 		var layer_size: float = radius * (
 			0.34 + float(layer) * 0.13
 		)
+		layer_size += sin(time_value * 5.0 + float(layer) * 1.7) * radius * 0.012 * reaction
 		var rotation_value: float = time_value * (
-			0.055 + float(layer) * 0.025
+			0.055 + float(layer) * 0.025 + reaction * 0.12
 		)
 		var color: Color = primary if layer % 2 == 0 else accent
 		_draw_regular_polygon(
@@ -463,6 +501,7 @@ func _draw_inner_technical_rings() -> void:
 			var angle: float = (
 				rotation_value
 				+ TAU * float(node_index) / float(sides)
+				+ sin(time_value * 4.2 + float(node_index)) * reaction * 0.055
 			)
 			var node_position: Vector2 = (
 				center
@@ -470,9 +509,9 @@ func _draw_inner_technical_rings() -> void:
 			)
 			_draw_rotated_diamond(
 				node_position,
-				radius * 0.014,
+				radius * (0.014 + reaction * 0.004),
 				angle + PI * 0.25,
-				Color(color.r, color.g, color.b, 0.18),
+				Color(color.r, color.g, color.b, 0.18 + reaction * 0.18),
 				maxf(1.0, radius * 0.0020)
 			)
 
@@ -482,6 +521,7 @@ func _draw_ring() -> void:
 	var marker_radius: float = maxf(6.0, radius * 0.0195)
 	var pulse: float = _beat_pulse()
 	var primary: Color = _primary()
+	var reaction: float = _hit_energy + _combo_energy * 0.26
 
 	draw_arc(
 		center,
@@ -489,8 +529,8 @@ func _draw_ring() -> void:
 		0.0,
 		TAU,
 		320,
-		Color(primary.r, primary.g, primary.b, 0.10 + pulse * 0.05),
-		width * 3.4,
+		Color(primary.r, primary.g, primary.b, 0.10 + pulse * 0.05 + reaction * 0.12),
+		width * (3.4 + reaction * 1.6),
 		true
 	)
 	draw_arc(
@@ -504,14 +544,16 @@ func _draw_ring() -> void:
 		true
 	)
 
-	for position_value in lane_positions:
+	for lane_index in range(lane_positions.size()):
+		var position_value: Vector2 = lane_positions[lane_index]
+		var lane_pulse: float = reaction * (0.5 + 0.5 * sin(_idle_time() * 7.0 + float(lane_index)))
 		draw_circle(
 			position_value,
-			marker_radius * 1.75,
-			Color(1.0, 1.0, 1.0, 0.08),
+			marker_radius * (1.75 + lane_pulse * 0.55),
+			Color(primary.r, primary.g, primary.b, 0.08 + lane_pulse * 0.18),
 			true
 		)
-		draw_circle(position_value, marker_radius, Color.WHITE, true)
+		draw_circle(position_value, marker_radius * (1.0 + lane_pulse * 0.16), Color.WHITE, true)
 
 
 
@@ -586,7 +628,8 @@ func _draw_hold(event: Dictionary) -> void:
 	var remaining: float = 1.0 - hold_progress
 	var length: float = radius * (0.52 if song_time < hit_time else maxf(0.085, 0.52 * remaining))
 	var tail: Vector2 = head - direction * length
-	var width: float = radius * 0.092 * float(difficulty.get("hold_width", 1.0))
+	# Hold fino: aproximadamente metade da espessura da R11/R12 inicial.
+	var width: float = radius * 0.050 * float(difficulty.get("hold_width", 1.0))
 	var color: Color = Color(1.0, 0.83, 0.08, 1.0)
 	var holding: bool = bool(event.get("_holding", false))
 	if holding:
@@ -603,124 +646,82 @@ func _draw_capsule(
 	active: bool,
 	progress: float
 ) -> void:
-	# HOLD CRISTALINO: trilho geometrico em vez de tubo arredondado.
+	# Fita de hold inspirada na leitura de arcades circulares: uma forma unica,
+	# larga e direcional. Brilho e movimento confirmam o estado pressionado.
 	var direction: Vector2 = (head - tail).normalized()
 	var normal: Vector2 = Vector2(-direction.y, direction.x)
 	var length: float = tail.distance_to(head)
-	var angle: float = direction.angle()
-	var glow_alpha: float = 0.42 if active else 0.24
-	var core_alpha: float = 0.96 if active else 0.78
+	var pulse: float = 0.5 + 0.5 * sin(_idle_time() * (10.0 if active else 4.0))
+	var glow_alpha: float = 0.26 if active else 0.12
 
-	# Aura larga e dois trilhos luminosos.
 	draw_line(
 		tail,
 		head,
-		Color(color.r, color.g, color.b, glow_alpha * 0.34),
-		half_width * 5.2,
+		Color(color.r, color.g, color.b, glow_alpha),
+		half_width * (2.65 + pulse * 0.16),
 		true
 	)
 	draw_line(
-		tail + normal * half_width * 0.62,
-		head + normal * half_width * 0.62,
+		tail,
+		head,
+		Color(0.006, 0.010, 0.022, 0.92),
+		half_width * 1.82,
+		true
+	)
+	draw_line(
+		tail,
+		head,
+		Color(color.r, color.g, color.b, 0.78 if active else 0.54),
+		half_width * 1.34,
+		true
+	)
+	draw_line(
+		tail + normal * half_width * 0.72,
+		head + normal * half_width * 0.72,
 		Color.WHITE,
-		maxf(2.0, half_width * 0.23),
+		maxf(2.0, half_width * 0.13),
 		true
 	)
 	draw_line(
-		tail - normal * half_width * 0.62,
-		head - normal * half_width * 0.62,
-		Color(color.r, color.g, color.b, core_alpha),
-		maxf(2.0, half_width * 0.28),
+		tail - normal * half_width * 0.72,
+		head - normal * half_width * 0.72,
+		Color(color.r, color.g, color.b, 0.92),
+		maxf(2.0, half_width * 0.13),
 		true
 	)
 
-	var cell_spacing: float = maxf(half_width * 1.35, 1.0)
-	var cell_count: int = maxi(4, int(length / cell_spacing))
-	var phase: float = fmod(
-		_idle_time() * (2.2 if active else 1.15),
-		1.0
-	)
-
-	for index in range(cell_count + 1):
-		var cell_t: float = clampf(
-			(float(index) + phase) / float(cell_count),
-			0.0,
-			1.0
-		)
-		var cell_position: Vector2 = tail.lerp(head, cell_t)
-		var cell_color: Color = color.lerp(
-			Color.WHITE,
-			0.28 if index % 2 == 0 else 0.08
-		)
-		cell_color.a = 0.82 if active else 0.54
-		var sides: int = 6 if index % 2 == 0 else 4
-		_draw_regular_polygon(
-			cell_position,
-			half_width * (0.72 if sides == 6 else 0.60),
-			sides,
-			angle + float(index) * 0.34,
-			cell_color,
-			maxf(2.0, half_width * 0.16)
-		)
-
-	# Parte ja completada vira um feixe branco vivo.
-	if progress > 0.0:
-		var completed_start: Vector2 = head.lerp(tail, progress)
+	# Barras deslizantes deixam a direcao evidente sem criar poluicao visual.
+	var marker_count: int = clampi(int(length / maxf(half_width * 2.8, 1.0)), 3, 12)
+	var phase: float = fmod(_idle_time() * (1.7 if active else 0.75), 1.0)
+	for index in range(marker_count):
+		var marker_t: float = fmod((float(index) + phase) / float(marker_count), 1.0)
+		var marker_position: Vector2 = tail.lerp(head, marker_t)
+		var marker_alpha: float = (0.82 if active else 0.42) * smoothstep(0.0, 0.12, marker_t)
 		draw_line(
-			completed_start,
-			head,
-			Color(1.0, 1.0, 1.0, 0.62),
-			half_width * 0.34,
+			marker_position - normal * half_width * 0.42,
+			marker_position + normal * half_width * 0.42,
+			Color(1.0, 1.0, 1.0, marker_alpha),
+			maxf(1.5, half_width * 0.10),
 			true
 		)
 
-	var pulse: float = 0.5 + 0.5 * sin(_idle_time() * 9.0)
-	var head_size: float = half_width * (1.42 + pulse * 0.16)
-
-	# Cabeca do hold: portal octogonal com flor de losangos.
-	_draw_regular_polygon(
+	# Alvo circular grande e estavel. O arco interno mostra o progresso.
+	var head_size: float = half_width * (1.05 + pulse * (0.08 if active else 0.025))
+	draw_circle(head, head_size * 1.30, Color(color.r, color.g, color.b, 0.15 + pulse * 0.06), true)
+	draw_circle(head, head_size, Color(0.008, 0.012, 0.026, 0.98), true)
+	draw_arc(head, head_size, 0.0, TAU, 48, Color.WHITE, maxf(3.0, half_width * 0.22), true)
+	draw_arc(
 		head,
-		head_size * 1.38,
-		8,
-		_idle_time() * 0.85,
-		Color(color.r, color.g, color.b, 0.48),
-		maxf(3.0, half_width * 0.24)
+		head_size * 0.70,
+		-PI * 0.5,
+		-PI * 0.5 + TAU * (progress if progress > 0.0 else 0.96),
+		40,
+		Color(color.r, color.g, color.b, 1.0),
+		maxf(3.0, half_width * 0.26),
+		true
 	)
-	_draw_regular_polygon(
-		head,
-		head_size,
-		6,
-		-_idle_time() * 1.10,
-		Color.WHITE,
-		maxf(3.0, half_width * 0.22)
-	)
-
-	for petal in range(4):
-		var petal_angle: float = (
-			PI * 0.25
-			+ TAU * float(petal) / 4.0
-			+ _idle_time() * 0.40
-		)
-		var petal_position: Vector2 = (
-			head
-			+ Vector2(cos(petal_angle), sin(petal_angle))
-			* head_size * 0.72
-		)
-		_draw_rotated_diamond(
-			petal_position,
-			head_size * 0.48,
-			petal_angle,
-			Color(color.r, color.g, color.b, 0.92),
-			maxf(2.0, half_width * 0.15)
-		)
-
-	_draw_rotated_diamond(
-		tail,
-		half_width * 1.08,
-		angle + PI * 0.25,
-		Color(color.r, color.g, color.b, 0.82),
-		maxf(2.0, half_width * 0.18)
-	)
+	draw_circle(head, head_size * 0.24, Color.WHITE if active else color, true)
+	draw_circle(tail, half_width * 0.86, Color(color.r, color.g, color.b, 0.92), true)
 
 func _draw_slide(event: Dictionary) -> void:
 	if not bool(event.get("_spawned", false)):

@@ -212,6 +212,7 @@ func _build_scene() -> void:
 	_music_player = AudioStreamPlayer.new()
 	_music_player.name = "MusicPlayer"
 	_music_player.bus = "Master"
+	_music_player.volume_db = -1.0
 	add_child(_music_player)
 
 	_video_player = VideoStreamPlayer.new()
@@ -220,6 +221,7 @@ func _build_scene() -> void:
 	_video_player.size = _video_rect.size
 	_video_player.expand = true
 	_video_player.loop = true
+	_video_player.bus = "Master"
 	_video_player.volume_db = -80.0
 	_video_player.z_index = 2
 	_video_player.visible = false
@@ -363,6 +365,7 @@ func _load_assets() -> void:
 		var audio_resource: Resource = load(audio_path)
 		if audio_resource is AudioStream:
 			_music_player.stream = audio_resource as AudioStream
+			_music_player.volume_db = -1.0
 			_song_duration = maxf((_music_player.stream as AudioStream).get_length(), 10.0)
 	else:
 		push_error("Audio not found: " + audio_path)
@@ -372,6 +375,8 @@ func _load_assets() -> void:
 		var video_resource: Resource = load(video_path)
 		if video_resource is VideoStream:
 			_video_player.stream = video_resource as VideoStream
+			# O MP3 e a fonte sincronizada. O video so fornece audio como fallback.
+			_video_player.volume_db = -80.0 if _music_player.stream != null else -1.0
 		else:
 			push_warning("Arquivo nao e VideoStream: " + video_path)
 	else:
@@ -837,6 +842,7 @@ func _resolve_hit(event: Dictionary, kind: String, quality: float) -> void:
 	_hits += 1
 	_combo += 1
 	_max_combo = maxi(_max_combo, _combo)
+	_renderer.register_hit(quality, _combo)
 	_performance = minf(100.0, _performance + (1.15 if quality >= 0.99 else 0.55))
 
 
@@ -847,8 +853,7 @@ func _resolve_miss(event: Dictionary) -> void:
 	event["_active"] = false
 	event["_holding"] = false
 
-	var position_value: Vector2 = _event_end_position(event)
-	_renderer.add_effect("miss", position_value, Color(1.0, 0.12, 0.16, 1.0))
+	# Miss silencioso: sem X vermelho ou explosao sobre a proxima nota.
 	_remove_tap_node(event)
 	_clear_event_led(event)
 
