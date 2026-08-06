@@ -3,7 +3,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "R7_EFFECTS_PRO_20260806"
+$Version = "R8_REFERENCE_PRECISION_20260806"
 
 function Project-Path {
     param([Parameter(Mandatory = $true)][string]$RelativePath)
@@ -15,74 +15,159 @@ function Write-Utf8NoBom {
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$Content
     )
+
     $Parent = Split-Path -Parent $Path
     if ($Parent -and -not (Test-Path -LiteralPath $Parent)) {
         New-Item -ItemType Directory -Path $Parent -Force | Out-Null
     }
+
     $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($Path, $Content, $Utf8NoBom)
 }
 
 function Require-File {
     param([Parameter(Mandatory = $true)][string]$RelativePath)
+
     $FullPath = Project-Path $RelativePath
     if (-not (Test-Path -LiteralPath $FullPath)) {
         throw "Arquivo obrigatorio nao encontrado: $RelativePath"
     }
 }
 
+function Backup-File {
+    param(
+        [Parameter(Mandatory = $true)][string]$RelativePath,
+        [Parameter(Mandatory = $true)][string]$BackupRoot
+    )
+
+    $Source = Project-Path $RelativePath
+    if (-not (Test-Path -LiteralPath $Source)) {
+        return
+    }
+
+    $Destination = Join-Path $BackupRoot $RelativePath
+    $DestinationParent = Split-Path -Parent $Destination
+    New-Item -ItemType Directory -Path $DestinationParent -Force | Out-Null
+    Copy-Item -LiteralPath $Source -Destination $Destination -Force
+}
+
+function Test-LfsPointer {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $false
+    }
+
+    $Item = Get-Item -LiteralPath $Path
+    if ($Item.Length -gt 1024) {
+        return $false
+    }
+
+    $FirstLine = Get-Content -LiteralPath $Path -TotalCount 1 -ErrorAction SilentlyContinue
+    return $FirstLine -like "version https://git-lfs.github.com/spec/v1*"
+}
+
+function Validate-CatalogAssets {
+    $CatalogPath = Project-Path "data\hit_music_songs.json"
+    $Catalog = Get-Content -LiteralPath $CatalogPath -Raw | ConvertFrom-Json
+
+    Write-Host ""
+    Write-Host "VALIDACAO DOS ASSETS:" -ForegroundColor Cyan
+
+    foreach ($Song in $Catalog.songs) {
+        $SongName = [string]$Song.title
+
+        foreach ($PropertyName in @("audio", "video", "cover", "scene")) {
+            $ResourcePath = [string]$Song.$PropertyName
+            if ([string]::IsNullOrWhiteSpace($ResourcePath)) {
+                Write-Warning "$SongName - $PropertyName vazio."
+                continue
+            }
+
+            $RelativePath = $ResourcePath.Replace("res://", "").Replace("/", [IO.Path]::DirectorySeparatorChar)
+            $FullPath = Project-Path $RelativePath
+
+            if (Test-Path -LiteralPath $FullPath) {
+                $SizeMb = [math]::Round((Get-Item -LiteralPath $FullPath).Length / 1MB, 2)
+                Write-Host "[OK] $SongName - $PropertyName - $ResourcePath ($SizeMb MB)" -ForegroundColor Green
+            }
+            else {
+                Write-Warning "$SongName - arquivo nao encontrado: $ResourcePath"
+            }
+        }
+    }
+}
+
 Write-Host ""
-Write-Host "========================================================" -ForegroundColor Cyan
-Write-Host " HIT MUSIC R7 - EFFECTS PRO / MENU MODERNO" -ForegroundColor Cyan
-Write-Host "========================================================" -ForegroundColor Cyan
+Write-Host "==========================================================" -ForegroundColor Cyan
+Write-Host " HIT MUSIC R8 - REFERENCE PRECISION" -ForegroundColor Cyan
+Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host "Versao: $Version" -ForegroundColor DarkGray
 Write-Host "Projeto: $ProjectRoot"
 Write-Host ""
 
 Require-File "project.godot"
+Require-File "data\hit_music_songs.json"
 Require-File "scripts\hit_music_r7\stage.gd"
-Require-File "scripts\hit_music_r7\catalog.gd"
-Require-File "scripts\hit_music_r7\path_builder.gd"
 Require-File "scripts\hit_music_r7\selector.gd"
 Require-File "scripts\hit_music_r7\playfield_renderer.gd"
 Require-File "scripts\hit_music_r7\tap_visual.gd"
-Require-File "data\hit_music_songs.json"
+Require-File "scripts\hit_music_r7\catalog.gd"
+Require-File "scripts\hit_music_r7\chart_factory.gd"
+Require-File "scripts\hit_music_r7\path_builder.gd"
 Require-File "entities\tazo.tscn"
 
+$GitAvailable = $null -ne (Get-Command git -ErrorAction SilentlyContinue)
+$GitRepository = Test-Path -LiteralPath (Project-Path ".git")
+
+if ($GitAvailable -and $GitRepository) {
+    $PointersFound = $false
+
+    Get-ChildItem -LiteralPath (Project-Path "medias") -File -Filter "*.ogv" -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            if (Test-LfsPointer $_.FullName) {
+                $PointersFound = $true
+                Write-Warning "Ponteiro Git LFS detectado: $($_.FullName)"
+            }
+        }
+
+    if ($PointersFound) {
+        Write-Host "Baixando os videos reais pelo Git LFS..." -ForegroundColor Yellow
+        git lfs pull
+    }
+}
+
+Validate-CatalogAssets
+
 $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$BackupRoot = Project-Path "_backup_hit_music_r7_effects_$Stamp"
+$BackupRoot = Project-Path "_backup_hit_music_r8_$Stamp"
 New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null
 
 $FilesToBackup = @(
+    "scripts\hit_music_r7\stage.gd",
     "scripts\hit_music_r7\selector.gd",
     "scripts\hit_music_r7\playfield_renderer.gd",
-    "scripts\hit_music_r7\tap_visual.gd",
     "scripts\change_scenes.gd"
 )
 
 foreach ($RelativePath in $FilesToBackup) {
-    $Source = Project-Path $RelativePath
-    if (Test-Path -LiteralPath $Source) {
-        $Destination = Join-Path $BackupRoot $RelativePath
-        $Parent = Split-Path -Parent $Destination
-        New-Item -ItemType Directory -Path $Parent -Force | Out-Null
-        Copy-Item -LiteralPath $Source -Destination $Destination -Force
-    }
+    Backup-File -RelativePath $RelativePath -BackupRoot $BackupRoot
 }
 
-$GitAvailable = $null -ne (Get-Command git -ErrorAction SilentlyContinue)
-if ($GitAvailable -and (Test-Path -LiteralPath (Project-Path ".git"))) {
+if ($GitAvailable -and $GitRepository) {
     $Dirty = git status --porcelain
+
     if ($Dirty) {
         git add -A
-        git commit -m "Checkpoint before R7 effects pro"
+        git commit -m "Checkpoint before R8 reference precision"
     }
 
-    $BackupBranch = "backup/pre-r7-effects-$Stamp"
+    $BackupBranch = "backup/pre-r8-$Stamp"
     git branch $BackupBranch HEAD
 
-    $TargetBranch = "r7-effects-pro"
+    $TargetBranch = "r8-reference-precision"
     $BranchExists = git branch --list $TargetBranch
+
     if ($BranchExists) {
         git switch $TargetBranch
     }
@@ -90,186 +175,1155 @@ if ($GitAvailable -and (Test-Path -LiteralPath (Project-Path ".git"))) {
         git switch -c $TargetBranch
     }
 
-    Write-Host "Branch de backup: $BackupBranch" -ForegroundColor DarkGray
+    Write-Host "Branch de seguranca: $BackupBranch" -ForegroundColor DarkGray
     Write-Host "Branch de trabalho: $TargetBranch" -ForegroundColor DarkGray
 }
 
-Write-Host "Gravando efeitos e seletor profissional..." -ForegroundColor Yellow
+Write-Host ""
+Write-Host "Aplicando correcao estrutural e visual..." -ForegroundColor Yellow
 
-Write-Utf8NoBom (Project-Path "scripts\hit_music_r7\tap_visual.gd") @'
+Write-Utf8NoBom (Project-Path "scripts\hit_music_r7\stage.gd") @'
 extends Node2D
 
-const TAZO_SCENE: PackedScene = preload("res://entities/tazo.tscn")
+const CATALOG: Script = preload("res://scripts/hit_music_r7/catalog.gd")
+const CHART_FACTORY: Script = preload("res://scripts/hit_music_r7/chart_factory.gd")
+const PATH_BUILDER: Script = preload("res://scripts/hit_music_r7/path_builder.gd")
+const TAP_VISUAL_SCRIPT: Script = preload("res://scripts/hit_music_r7/tap_visual.gd")
+const RENDERER_SCRIPT: Script = preload("res://scripts/hit_music_r7/playfield_renderer.gd")
+const LED_CLIENT: Script = preload("res://scripts/hit_music_r7/led_client.gd")
 
-var origin: Vector2 = Vector2.ZERO
-var target: Vector2 = Vector2.ZERO
-var spawn_time: float = 0.0
-var hit_time: float = 1.0
-var desired_diameter: float = 100.0
-var frame_index: int = 0
+enum GameState {
+	PRESENTATION,
+	COUNTDOWN,
+	PLAYING,
+	RESULT,
+}
 
-var _sprite: AnimatedSprite2D
-var _progress: float = 0.0
-var _current_scale: float = 1.0
-var _visual_color: Color = Color(0.10, 0.92, 1.0, 1.0)
+const NUM_LANES: int = 8
+const INPUT_ACTIONS: Array[String] = [
+	"input_a",
+	"input_b",
+	"input_c",
+	"input_d",
+	"input_e",
+	"input_f",
+	"input_g",
+	"input_h",
+]
+
+const TOP_MARGIN_RATIO: float = 0.022
+const TOP_HEIGHT_RATIO: float = 0.205
+const TOP_GAP_RATIO: float = 0.024
+const SIDE_MARGIN_RATIO: float = 0.015
+const BOTTOM_MARGIN_RATIO: float = 0.012
+const CIRCLE_SCALE: float = 0.985
+const PRESENTATION_SECONDS: float = 2.70
+const COUNTDOWN_SECONDS: float = 3.0
+const RESULT_SECONDS: float = 12.0
+const RECORD_PATH: String = "user://hit_music_records.json"
+
+var _song: Dictionary = {}
+var _difficulty_name: String = "easy"
+var _difficulty: Dictionary = {}
+var _events: Array = []
+var _state: int = GameState.PRESENTATION
+var _state_time: float = 0.0
+var _song_time: float = 0.0
+var _song_duration: float = 90.0
+var _failed: bool = false
+
+var _center: Vector2 = Vector2.ZERO
+var _radius: float = 100.0
+var _lane_positions: PackedVector2Array = PackedVector2Array()
+var _video_rect: Rect2 = Rect2()
+
+var _music_player: AudioStreamPlayer
+var _video_player: VideoStreamPlayer
+var _cover: TextureRect
+var _renderer
+
+var _hud_layer: CanvasLayer
+var _top_panel: Panel
+var _label_title: Label
+var _label_difficulty: Label
+var _label_score: Label
+var _label_combo: Label
+var _label_performance: Label
+var _label_time: Label
+var _progress_bar: ProgressBar
+var _countdown_label: Label
+var _result_panel: Panel
+var _result_title: Label
+var _result_score: Label
+var _result_details: Label
+
+var _score_quality_sum: float = 0.0
+var _judgement_count: int = 0
+var _hits: int = 0
+var _misses: int = 0
+var _combo: int = 0
+var _max_combo: int = 0
+var _performance: float = 100.0
+
+var _touch_positions: Dictionary = {}
+var _mouse_down: bool = false
+var _mouse_position: Vector2 = Vector2.ZERO
+var _pointer_active: bool = false
+var _pointer_position: Vector2 = Vector2.ZERO
+
+
+func _song_id() -> String:
+	return "carmine"
 
 
 func _ready() -> void:
-	var instance: Node = TAZO_SCENE.instantiate()
-	if not instance is Node2D:
-		push_error("res://entities/tazo.tscn precisa ter raiz Node2D.")
-		instance.queue_free()
+	Engine.max_fps = 60
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+
+	_song = CATALOG.get_song(_song_id())
+	if _song.is_empty():
+		push_error("Song not found in catalog: " + _song_id())
 		return
 
-	add_child(instance)
-	_sprite = _find_sprite(instance)
-	if _sprite != null:
-		_sprite.animation = &"idle"
-		_sprite.stop()
-		_sprite.frame = clampi(frame_index, 0, 2)
-		_sprite.centered = true
-		_sprite.position = Vector2.ZERO
+	if get_tree().has_meta("hit_music_difficulty"):
+		_difficulty_name = str(get_tree().get_meta("hit_music_difficulty")).to_lower()
+	if _difficulty_name != "hard":
+		_difficulty_name = "easy"
 
-	z_index = 30
-	queue_redraw()
+	_difficulty = CATALOG.get_difficulty(_song, _difficulty_name)
+	if _difficulty.is_empty():
+		push_error("Difficulty not found for song: " + _song_id())
+		return
 
-
-func configure(
-	new_origin: Vector2,
-	new_target: Vector2,
-	new_spawn_time: float,
-	new_hit_time: float,
-	new_diameter: float,
-	new_frame_index: int
-) -> void:
-	origin = new_origin
-	target = new_target
-	spawn_time = new_spawn_time
-	hit_time = new_hit_time
-	desired_diameter = new_diameter
-	frame_index = clampi(new_frame_index, 0, 2)
-	position = origin
-	_visual_color = _frame_color(frame_index)
-
-	if _sprite != null:
-		_sprite.frame = frame_index
-
-	queue_redraw()
+	_calculate_geometry()
+	_build_scene()
+	_load_assets()
+	_prepare_chart()
+	_update_hud()
+	_set_gameplay_hud_visible(true)
+	get_viewport().size_changed.connect(_on_viewport_size_changed)
+	LED_CLIENT.clear_all()
 
 
-func update_visual(song_time: float) -> void:
-	var duration: float = maxf(hit_time - spawn_time, 0.001)
-	_progress = clampf((song_time - spawn_time) / duration, 0.0, 1.0)
+func _process(delta: float) -> void:
+	_state_time += delta
+	_process_physical_inputs()
 
-	var eased: float = 1.0 - pow(1.0 - _progress, 4.0)
-	position = origin.lerp(target, eased)
+	match _state:
+		GameState.PRESENTATION:
+			if _state_time >= PRESENTATION_SECONDS:
+				_start_countdown()
+		GameState.COUNTDOWN:
+			_update_song_time()
+			var count_value: int = maxi(1, int(ceil(COUNTDOWN_SECONDS - _state_time)))
+			_countdown_label.text = str(count_value)
+			if _state_time >= COUNTDOWN_SECONDS:
+				_start_playing()
+		GameState.PLAYING:
+			_update_song_time()
+			_spawn_due_events()
+			_update_tap_visuals()
+			_update_notes_and_misses()
+			_update_hud()
+			if _song_time >= _song_duration - 0.02:
+				_finish_game(false)
+		GameState.RESULT:
+			if _state_time >= RESULT_SECONDS:
+				_go_to_selector()
 
-	var source_diameter: float = 160.0
-	_current_scale = desired_diameter / source_diameter
-	_current_scale *= lerpf(0.58, 1.0, eased)
-	scale = Vector2.ONE * _current_scale
-
-	var pulse: float = 0.5 + 0.5 * sin(float(Time.get_ticks_msec()) * 0.016)
-	modulate = Color(1.0, 1.0, 1.0, 0.90 + pulse * 0.10)
+	_renderer.set_runtime(
+		_events,
+		_song_time,
+		_state_name(),
+		_pointer_position,
+		_pointer_active
+	)
 	queue_redraw()
 
 
 func _draw() -> void:
-	var pulse: float = 0.5 + 0.5 * sin(float(Time.get_ticks_msec()) * 0.018)
-	var local_origin: Vector2 = origin - position
-	var path_vector: Vector2 = local_origin
-	var path_length: float = path_vector.length()
+	var screen: Vector2 = get_viewport_rect().size
+	draw_rect(Rect2(Vector2.ZERO, screen), Color.BLACK, true)
+	draw_circle(_center, _radius * 1.012, Color(0.0, 0.0, 0.0, 0.96), true)
+	draw_circle(_center, _radius * 0.995, _dark_color(), true)
 
-	if path_length > 1.0:
-		var direction: Vector2 = path_vector / path_length
-		for index in range(4):
-			var t: float = 0.18 + float(index) * 0.16
-			var ghost_position: Vector2 = direction * path_length * t
-			var ghost_size: float = 19.0 - float(index) * 2.7
-			var alpha: float = (0.18 - float(index) * 0.028) * (0.35 + _progress * 0.65)
-			_draw_diamond(
-				ghost_position,
-				ghost_size,
-				Color(_visual_color.r, _visual_color.g, _visual_color.b, alpha),
-				3.2
-			)
-
-	var ring_radius: float = 76.0 + pulse * 6.0
-	draw_circle(
-		Vector2.ZERO,
-		ring_radius * 0.78,
-		Color(_visual_color.r, _visual_color.g, _visual_color.b, 0.075),
-		true
-	)
+	var glow_color: Color = _primary_color()
 	draw_arc(
-		Vector2.ZERO,
-		ring_radius,
+		_center,
+		_radius * 1.002,
 		0.0,
 		TAU,
-		44,
-		Color(_visual_color.r, _visual_color.g, _visual_color.b, 0.36),
-		5.0,
-		true
-	)
-	draw_arc(
-		Vector2.ZERO,
-		ring_radius * 0.84,
-		-PI * 0.68,
-		PI * 0.10,
-		26,
-		Color.WHITE,
-		3.0,
+		240,
+		Color(glow_color.r, glow_color.g, glow_color.b, 0.12),
+		maxf(4.0, _radius * 0.014),
 		true
 	)
 
-	for index in range(4):
-		var angle: float = PI * 0.25 + float(index) * PI * 0.5
-		var direction := Vector2(cos(angle), sin(angle))
-		var inner: Vector2 = direction * (ring_radius * 0.94)
-		var outer: Vector2 = direction * (ring_radius * 1.18)
-		draw_line(
-			inner,
-			outer,
-			Color(_visual_color.r, _visual_color.g, _visual_color.b, 0.38),
-			3.0,
-			true
+
+func _calculate_geometry() -> void:
+	var screen: Vector2 = get_viewport_rect().size
+	var side_margin: float = maxf(4.0, screen.x * SIDE_MARGIN_RATIO)
+	var bottom_margin: float = maxf(4.0, screen.y * BOTTOM_MARGIN_RATIO)
+	var top_reserved: float = screen.y * (
+		TOP_MARGIN_RATIO + TOP_HEIGHT_RATIO + TOP_GAP_RATIO
+	)
+
+	var radius_by_width: float = (screen.x - side_margin * 2.0) * 0.5
+	var radius_by_height: float = (screen.y - top_reserved - bottom_margin) * 0.5
+	_radius = maxf(120.0, minf(radius_by_width, radius_by_height) * CIRCLE_SCALE)
+	_center = Vector2(
+		screen.x * 0.5,
+		screen.y - bottom_margin - _radius
+	)
+
+	_lane_positions = PackedVector2Array()
+	for lane in range(NUM_LANES):
+		var angle: float = -PI * 0.5 + TAU * float(lane) / float(NUM_LANES)
+		_lane_positions.append(
+			_center + Vector2(cos(angle), sin(angle)) * _radius * 0.905
 		)
 
-
-func _draw_diamond(
-	position_value: Vector2,
-	size: float,
-	color: Color,
-	width: float
-) -> void:
-	var points := PackedVector2Array([
-		position_value + Vector2(0.0, -size),
-		position_value + Vector2(size, 0.0),
-		position_value + Vector2(0.0, size),
-		position_value + Vector2(-size, 0.0),
-		position_value + Vector2(0.0, -size),
-	])
-	draw_polyline(points, color, width, true)
+	var top_margin: float = screen.x * TOP_MARGIN_RATIO
+	_video_rect = Rect2(
+		Vector2(top_margin, top_margin),
+		Vector2(
+			screen.x - top_margin * 2.0,
+			screen.y * TOP_HEIGHT_RATIO
+		)
+	)
 
 
-func _frame_color(index: int) -> Color:
-	match index:
-		1:
-			return Color(1.0, 0.84, 0.08, 1.0)
-		2:
-			return Color(1.0, 0.14, 0.45, 1.0)
+func _build_scene() -> void:
+	_music_player = AudioStreamPlayer.new()
+	_music_player.name = "MusicPlayer"
+	_music_player.bus = "Master"
+	add_child(_music_player)
+
+	_video_player = VideoStreamPlayer.new()
+	_video_player.name = "VideoBackground"
+	_video_player.position = _video_rect.position
+	_video_player.size = _video_rect.size
+	_video_player.expand = true
+	_video_player.loop = true
+	_video_player.volume_db = -80.0
+	_video_player.z_index = 2
+	_video_player.visible = false
+	_video_player.material = _rounded_video_material()
+	add_child(_video_player)
+
+	_cover = TextureRect.new()
+	_cover.name = "PresentationCover"
+	_cover.position = _center - Vector2(_radius * 0.72, _radius * 0.58)
+	_cover.size = Vector2(_radius * 1.44, _radius * 1.16)
+	_cover.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_cover.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_cover.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_cover.z_index = 3
+	add_child(_cover)
+
+	_renderer = RENDERER_SCRIPT.new()
+	_renderer.name = "PlayfieldRenderer"
+	_renderer.z_index = 10
+	add_child(_renderer)
+	_renderer.configure(_center, _radius, _lane_positions, _song, _difficulty)
+
+	_build_hud()
+
+
+func _build_hud() -> void:
+	_hud_layer = CanvasLayer.new()
+	_hud_layer.layer = 40
+	add_child(_hud_layer)
+
+	var screen: Vector2 = get_viewport_rect().size
+	var margin: float = screen.x * TOP_MARGIN_RATIO
+	var height: float = screen.y * TOP_HEIGHT_RATIO
+
+	_top_panel = Panel.new()
+	_top_panel.position = Vector2(margin, margin)
+	_top_panel.size = Vector2(screen.x - margin * 2.0, height)
+	_top_panel.add_theme_stylebox_override("panel", _top_panel_style())
+	_hud_layer.add_child(_top_panel)
+
+	var font: Font = _load_font()
+	var inner_margin: float = _top_panel.size.x * 0.025
+	var title_width: float = _top_panel.size.x * 0.52
+	var right_x: float = _top_panel.size.x * 0.60
+
+	_label_title = _make_label(
+		str(_song.get("title", "HIT MUSIC")),
+		int(height * 0.24),
+		HORIZONTAL_ALIGNMENT_LEFT,
+		font
+	)
+	_label_title.position = Vector2(inner_margin, height * 0.10)
+	_label_title.size = Vector2(title_width, height * 0.34)
+	_top_panel.add_child(_label_title)
+
+	_label_difficulty = _make_label(
+		"DIFICIL" if _difficulty_name == "hard" else "FACIL",
+		int(height * 0.15),
+		HORIZONTAL_ALIGNMENT_LEFT,
+		font
+	)
+	_label_difficulty.position = Vector2(inner_margin, height * 0.47)
+	_label_difficulty.size = Vector2(title_width, height * 0.22)
+	_label_difficulty.add_theme_color_override("font_color", _accent_color())
+	_top_panel.add_child(_label_difficulty)
+
+	_label_time = _make_label("0:00", int(height * 0.14), HORIZONTAL_ALIGNMENT_LEFT, font)
+	_label_time.position = Vector2(inner_margin, height * 0.70)
+	_label_time.size = Vector2(title_width * 0.42, height * 0.18)
+	_top_panel.add_child(_label_time)
+
+	_label_score = _make_label("100.00%", int(height * 0.29), HORIZONTAL_ALIGNMENT_RIGHT, font)
+	_label_score.position = Vector2(right_x, height * 0.06)
+	_label_score.size = Vector2(_top_panel.size.x - right_x - inner_margin, height * 0.38)
+	_label_score.add_theme_color_override("font_color", _secondary_color())
+	_top_panel.add_child(_label_score)
+
+	_label_combo = _make_label("COMBO 0", int(height * 0.14), HORIZONTAL_ALIGNMENT_RIGHT, font)
+	_label_combo.position = Vector2(right_x, height * 0.46)
+	_label_combo.size = Vector2(_top_panel.size.x - right_x - inner_margin, height * 0.18)
+	_top_panel.add_child(_label_combo)
+
+	_label_performance = _make_label("LIFE 100%", int(height * 0.13), HORIZONTAL_ALIGNMENT_RIGHT, font)
+	_label_performance.position = Vector2(right_x, height * 0.67)
+	_label_performance.size = Vector2(_top_panel.size.x - right_x - inner_margin, height * 0.18)
+	_label_performance.add_theme_color_override("font_color", _primary_color())
+	_top_panel.add_child(_label_performance)
+
+	_progress_bar = ProgressBar.new()
+	_progress_bar.min_value = 0.0
+	_progress_bar.max_value = 1.0
+	_progress_bar.value = 0.0
+	_progress_bar.show_percentage = false
+	_progress_bar.position = Vector2(inner_margin, height * 0.90)
+	_progress_bar.size = Vector2(_top_panel.size.x - inner_margin * 2.0, maxf(7.0, height * 0.035))
+	_progress_bar.add_theme_stylebox_override("background", _progress_background_style())
+	_progress_bar.add_theme_stylebox_override("fill", _progress_fill_style())
+	_top_panel.add_child(_progress_bar)
+
+	_countdown_label = _make_label("", int(height * 0.56), HORIZONTAL_ALIGNMENT_CENTER, font)
+	_countdown_label.position = _top_panel.position
+	_countdown_label.size = _top_panel.size
+	_countdown_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_countdown_label.add_theme_color_override("font_color", Color.WHITE)
+	_countdown_label.add_theme_color_override(
+		"font_outline_color",
+		Color(0.0, 0.0, 0.0, 0.98)
+	)
+	_countdown_label.add_theme_constant_override("outline_size", 12)
+	_countdown_label.visible = false
+	_hud_layer.add_child(_countdown_label)
+
+	_result_panel = Panel.new()
+	_result_panel.position = _center - Vector2(_radius * 0.56, _radius * 0.40)
+	_result_panel.size = Vector2(_radius * 1.12, _radius * 0.80)
+	_result_panel.visible = false
+	_result_panel.add_theme_stylebox_override("panel", _result_panel_style())
+	_hud_layer.add_child(_result_panel)
+
+	_result_title = _make_label("TRACK CLEAR", int(_radius * 0.085), HORIZONTAL_ALIGNMENT_CENTER, font)
+	_result_title.position = Vector2(_radius * 0.05, _radius * 0.05)
+	_result_title.size = Vector2(_result_panel.size.x - _radius * 0.10, _radius * 0.14)
+	_result_panel.add_child(_result_title)
+
+	_result_score = _make_label("100.00%", int(_radius * 0.12), HORIZONTAL_ALIGNMENT_CENTER, font)
+	_result_score.position = Vector2(_radius * 0.05, _radius * 0.22)
+	_result_score.size = Vector2(_result_panel.size.x - _radius * 0.10, _radius * 0.18)
+	_result_score.add_theme_color_override("font_color", _accent_color())
+	_result_panel.add_child(_result_score)
+
+	_result_details = _make_label("", int(_radius * 0.038), HORIZONTAL_ALIGNMENT_CENTER, font)
+	_result_details.position = Vector2(_radius * 0.06, _radius * 0.45)
+	_result_details.size = Vector2(_result_panel.size.x - _radius * 0.12, _radius * 0.25)
+	_result_details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_result_panel.add_child(_result_details)
+
+
+func _load_assets() -> void:
+	var audio_path: String = str(_song.get("audio", ""))
+	if ResourceLoader.exists(audio_path):
+		var audio_resource: Resource = load(audio_path)
+		if audio_resource is AudioStream:
+			_music_player.stream = audio_resource as AudioStream
+			_song_duration = maxf((_music_player.stream as AudioStream).get_length(), 10.0)
+	else:
+		push_error("Audio not found: " + audio_path)
+
+	var video_path: String = str(_song.get("video", ""))
+	if ResourceLoader.exists(video_path):
+		var video_resource: Resource = load(video_path)
+		if video_resource is VideoStream:
+			_video_player.stream = video_resource as VideoStream
+		else:
+			push_warning("Arquivo nao e VideoStream: " + video_path)
+	else:
+		push_warning("Video nao encontrado: " + video_path)
+
+	var cover_path: String = str(_song.get("cover", ""))
+	if ResourceLoader.exists(cover_path):
+		var cover_resource: Resource = load(cover_path)
+		if cover_resource is Texture2D:
+			_cover.texture = cover_resource as Texture2D
+	else:
+		_cover.visible = false
+
+
+func _prepare_chart() -> void:
+	_events = CHART_FACTORY.build(_song, _difficulty_name, _song_duration)
+	for event_value in _events:
+		if not event_value is Dictionary:
+			continue
+		var event: Dictionary = event_value as Dictionary
+		event["_spawned"] = false
+		event["_resolved"] = false
+		event["_active"] = false
+		event["_holding"] = false
+		event["_visual_progress"] = 0.0
+		if str(event.get("type", "")) == "slide":
+			event["_path_points"] = PATH_BUILDER.build(
+				event,
+				_center,
+				_radius,
+				_lane_positions
+			)
+
+
+func _start_countdown() -> void:
+	_state = GameState.COUNTDOWN
+	_state_time = 0.0
+	_cover.visible = false
+	_video_player.visible = true
+	if _video_player.stream != null:
+		_video_player.play()
+	else:
+		push_warning("Video da musica nao foi carregado: " + str(_song.get("video", "")))
+	if _music_player.stream != null:
+		_music_player.play()
+	_set_gameplay_hud_visible(false)
+	_countdown_label.visible = true
+	_countdown_label.text = "3"
+
+
+func _start_playing() -> void:
+	_state = GameState.PLAYING
+	_state_time = 0.0
+	_countdown_label.visible = false
+	_set_gameplay_hud_visible(true)
+
+
+func _set_gameplay_hud_visible(value: bool) -> void:
+	for control in [
+		_label_title,
+		_label_difficulty,
+		_label_score,
+		_label_combo,
+		_label_performance,
+		_label_time,
+		_progress_bar,
+	]:
+		if control != null and is_instance_valid(control):
+			control.visible = value
+
+
+func _rounded_video_material() -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = """
+shader_type canvas_item;
+
+uniform float corner_radius : hint_range(0.01, 0.30) = 0.085;
+uniform float feather : hint_range(0.0005, 0.03) = 0.004;
+
+float rounded_rect_mask(vec2 uv, float radius_value) {
+	vec2 half_size = vec2(0.5);
+	vec2 q = abs(uv - vec2(0.5)) - (half_size - vec2(radius_value));
+	float distance_value = length(max(q, vec2(0.0))) - radius_value;
+	return 1.0 - smoothstep(-feather, feather, distance_value);
+}
+
+void fragment() {
+	vec4 source_color = texture(TEXTURE, UV);
+	float mask_value = rounded_rect_mask(UV, corner_radius);
+	COLOR = vec4(source_color.rgb, source_color.a * mask_value);
+}
+"""
+	var material := ShaderMaterial.new()
+	material.shader = shader
+	return material
+
+
+func _update_song_time() -> void:
+	if _music_player == null or not _music_player.playing:
+		return
+	var value: float = _music_player.get_playback_position()
+	value += AudioServer.get_time_since_last_mix()
+	value -= AudioServer.get_output_latency()
+	_song_time = clampf(value, 0.0, _song_duration)
+
+
+func _spawn_due_events() -> void:
+	var approach: float = float(_difficulty.get("approach", 1.0))
+	for event_value in _events:
+		if not event_value is Dictionary:
+			continue
+		var event: Dictionary = event_value as Dictionary
+		if bool(event.get("_spawned", false)):
+			continue
+		var hit_time: float = float(event.get("time", 0.0))
+		if _song_time < hit_time - approach:
+			continue
+
+		event["_spawned"] = true
+		var type_name: String = str(event.get("type", "tap"))
+		if type_name == "tap":
+			_spawn_tap_visual(event, approach)
+		elif type_name == "hold":
+			var lane: int = int(event.get("lane", 0))
+			LED_CLIENT.set_lane(lane, _accent_color())
+		elif type_name == "slide":
+			pass
+
+
+func _spawn_tap_visual(event: Dictionary, approach: float) -> void:
+	var lane: int = clampi(int(event.get("lane", 0)), 0, NUM_LANES - 1)
+	var visual = TAP_VISUAL_SCRIPT.new()
+	add_child(visual)
+	visual.configure(
+		_center,
+		_lane_positions[lane],
+		float(event.get("time", 0.0)) - approach,
+		float(event.get("time", 0.0)),
+		_radius * 0.145 * float(_difficulty.get("tap_scale", 1.0)),
+		int(event.get("color_index", lane % 3))
+	)
+	event["_node"] = visual
+	LED_CLIENT.set_lane(lane, _tap_color(int(event.get("color_index", 0))))
+
+
+func _update_tap_visuals() -> void:
+	for event_value in _events:
+		if not event_value is Dictionary:
+			continue
+		var event: Dictionary = event_value as Dictionary
+		if str(event.get("type", "")) != "tap":
+			continue
+		if bool(event.get("_resolved", false)):
+			continue
+		var node_value: Variant = event.get("_node", null)
+		if node_value is Node2D and is_instance_valid(node_value):
+			node_value.update_visual(_song_time)
+
+
+func _update_notes_and_misses() -> void:
+	var hit_window: float = float(_difficulty.get("hit_window", 0.20))
+	for event_value in _events:
+		if not event_value is Dictionary:
+			continue
+		var event: Dictionary = event_value as Dictionary
+		if bool(event.get("_resolved", false)):
+			continue
+
+		var type_name: String = str(event.get("type", "tap"))
+		var hit_time: float = float(event.get("time", 0.0))
+		var end_time: float = float(event.get("end_time", hit_time))
+
+		if type_name == "tap":
+			if _song_time > hit_time + hit_window:
+				_resolve_miss(event)
+		elif type_name == "hold":
+			if bool(event.get("_holding", false)):
+				if _song_time >= end_time:
+					_resolve_hit(event, "hold", 1.0)
+			elif _song_time > hit_time + hit_window:
+				_resolve_miss(event)
+		elif type_name == "slide":
+			if not bool(event.get("_active", false)) and _song_time > hit_time + hit_window:
+				_resolve_miss(event)
+			elif _song_time > end_time + 0.28:
+				_resolve_miss(event)
+
+
+func _process_physical_inputs() -> void:
+	if _state == GameState.RESULT:
+		if _action_pressed("input_start") or _action_pressed("ui_accept"):
+			get_tree().reload_current_scene()
+		elif _action_pressed("input_b") or _action_pressed("ui_cancel"):
+			_go_to_selector()
+		return
+
+	if _state != GameState.PLAYING:
+		return
+
+	for lane in range(INPUT_ACTIONS.size()):
+		var action: String = INPUT_ACTIONS[lane]
+		if not InputMap.has_action(action):
+			continue
+		if Input.is_action_just_pressed(action):
+			_handle_lane_press(lane, "lane_%d" % lane)
+		if Input.is_action_just_released(action):
+			_handle_lane_release(lane, "lane_%d" % lane)
+
+
+func _input(event: InputEvent) -> void:
+	if _state == GameState.RESULT:
+		if event is InputEventScreenTouch and event.pressed:
+			get_tree().reload_current_scene()
+		elif event is InputEventMouseButton and event.pressed:
+			get_tree().reload_current_scene()
+		return
+
+	if _state != GameState.PLAYING:
+		return
+
+	if event is InputEventScreenTouch:
+		var touch: InputEventScreenTouch = event
+		_pointer_position = touch.position
+		_pointer_active = touch.pressed
+		if touch.pressed:
+			_touch_positions[touch.index] = touch.position
+			_handle_pointer_press("touch_%d" % touch.index, touch.position)
+		else:
+			_touch_positions.erase(touch.index)
+			_handle_pointer_release("touch_%d" % touch.index, touch.position)
+	elif event is InputEventScreenDrag:
+		var drag: InputEventScreenDrag = event
+		_touch_positions[drag.index] = drag.position
+		_pointer_position = drag.position
+		_pointer_active = true
+		_handle_pointer_move("touch_%d" % drag.index, drag.position)
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		var mouse_button: InputEventMouseButton = event
+		_mouse_down = mouse_button.pressed
+		_mouse_position = mouse_button.position
+		_pointer_position = mouse_button.position
+		_pointer_active = mouse_button.pressed
+		if mouse_button.pressed:
+			_handle_pointer_press("mouse", mouse_button.position)
+		else:
+			_handle_pointer_release("mouse", mouse_button.position)
+	elif event is InputEventMouseMotion:
+		var motion: InputEventMouseMotion = event
+		_mouse_position = motion.position
+		_pointer_position = motion.position
+		_pointer_active = _mouse_down
+		if _mouse_down:
+			_handle_pointer_move("mouse", motion.position)
+
+
+func _handle_pointer_press(source: String, position_value: Vector2) -> void:
+	var lane: int = _nearest_lane(position_value)
+	if lane < 0:
+		return
+	_handle_lane_press(lane, source)
+
+
+func _handle_pointer_move(source: String, position_value: Vector2) -> void:
+	for event_value in _events:
+		if not event_value is Dictionary:
+			continue
+		var event: Dictionary = event_value as Dictionary
+		if bool(event.get("_resolved", false)):
+			continue
+		if str(event.get("type", "")) != "slide":
+			continue
+		if not bool(event.get("_active", false)):
+			continue
+		if str(event.get("_source", "")) != source:
+			continue
+
+		var points_value: Variant = event.get("_path_points", PackedVector2Array())
+		if not points_value is PackedVector2Array:
+			continue
+		var points: PackedVector2Array = points_value as PackedVector2Array
+		var current_progress: float = float(event.get("_visual_progress", 0.0))
+		var nearest: Dictionary = PATH_BUILDER.nearest_progress(
+			points,
+			position_value,
+			current_progress
+		)
+		var distance_value: float = float(nearest.get("distance", INF))
+		if distance_value <= _radius * 0.115:
+			var next_progress: float = maxf(
+				current_progress,
+				float(nearest.get("progress", current_progress))
+			)
+			event["_visual_progress"] = next_progress
+			if next_progress >= 0.965:
+				var end_position: Vector2 = PATH_BUILDER.point_at(points, 1.0)
+				_renderer.add_effect("slide", end_position, _primary_color())
+				_resolve_hit(event, "slide", 1.0)
+
+
+func _handle_pointer_release(source: String, _position_value: Vector2) -> void:
+	for event_value in _events:
+		if not event_value is Dictionary:
+			continue
+		var event: Dictionary = event_value as Dictionary
+		if bool(event.get("_resolved", false)):
+			continue
+		if str(event.get("_source", "")) != source:
+			continue
+
+		var type_name: String = str(event.get("type", ""))
+		if type_name == "hold" and bool(event.get("_holding", false)):
+			var end_time: float = float(event.get("end_time", 0.0))
+			if _song_time >= end_time - 0.12:
+				_resolve_hit(event, "hold", 1.0)
+			else:
+				_resolve_miss(event)
+		elif type_name == "slide" and bool(event.get("_active", false)):
+			if float(event.get("_visual_progress", 0.0)) < 0.90:
+				_resolve_miss(event)
+
+
+func _handle_lane_press(lane: int, source: String) -> void:
+	if _try_tap(lane):
+		return
+	if _try_hold(lane, source):
+		return
+	_try_slide(lane, source)
+
+
+func _handle_lane_release(_lane: int, source: String) -> void:
+	for event_value in _events:
+		if not event_value is Dictionary:
+			continue
+		var event: Dictionary = event_value as Dictionary
+		if bool(event.get("_resolved", false)):
+			continue
+		if str(event.get("type", "")) != "hold":
+			continue
+		if str(event.get("_source", "")) != source:
+			continue
+		var end_time: float = float(event.get("end_time", 0.0))
+		if _song_time >= end_time - 0.12:
+			_resolve_hit(event, "hold", 1.0)
+		else:
+			_resolve_miss(event)
+
+
+func _try_tap(lane: int) -> bool:
+	var hit_window: float = float(_difficulty.get("hit_window", 0.20))
+	var perfect_window: float = float(_difficulty.get("perfect_window", 0.075))
+	var best: Dictionary = {}
+	var best_difference: float = INF
+
+	for event_value in _events:
+		if not event_value is Dictionary:
+			continue
+		var event: Dictionary = event_value as Dictionary
+		if bool(event.get("_resolved", false)):
+			continue
+		if str(event.get("type", "")) != "tap":
+			continue
+		if int(event.get("lane", -1)) != lane:
+			continue
+
+		var difference: float = absf(_song_time - float(event.get("time", 0.0)))
+		if difference <= hit_window and difference < best_difference:
+			best = event
+			best_difference = difference
+
+	if best.is_empty():
+		return false
+
+	var quality: float = 1.0 if best_difference <= perfect_window else 0.72
+	_resolve_hit(best, "tap", quality)
+	return true
+
+
+func _try_hold(lane: int, source: String) -> bool:
+	var hit_window: float = float(_difficulty.get("hit_window", 0.20))
+	var best: Dictionary = {}
+	var best_difference: float = INF
+
+	for event_value in _events:
+		if not event_value is Dictionary:
+			continue
+		var event: Dictionary = event_value as Dictionary
+		if bool(event.get("_resolved", false)):
+			continue
+		if str(event.get("type", "")) != "hold":
+			continue
+		if int(event.get("lane", -1)) != lane:
+			continue
+
+		var difference: float = absf(_song_time - float(event.get("time", 0.0)))
+		if difference <= hit_window and difference < best_difference:
+			best = event
+			best_difference = difference
+
+	if best.is_empty():
+		return false
+
+	best["_holding"] = true
+	best["_source"] = source
+	return true
+
+
+func _try_slide(lane: int, source: String) -> bool:
+	var hit_window: float = float(_difficulty.get("hit_window", 0.20))
+	var best: Dictionary = {}
+	var best_difference: float = INF
+
+	for event_value in _events:
+		if not event_value is Dictionary:
+			continue
+		var event: Dictionary = event_value as Dictionary
+		if bool(event.get("_resolved", false)):
+			continue
+		if str(event.get("type", "")) != "slide":
+			continue
+		if bool(event.get("_active", false)):
+			continue
+
+		var path_value: Variant = event.get("path", [])
+		if not path_value is Array or (path_value as Array).is_empty():
+			continue
+		if int((path_value as Array)[0]) != lane:
+			continue
+
+		var difference: float = absf(_song_time - float(event.get("time", 0.0)))
+		if difference <= hit_window and difference < best_difference:
+			best = event
+			best_difference = difference
+
+	if best.is_empty():
+		return false
+
+	best["_active"] = true
+	best["_source"] = source
+	best["_visual_progress"] = 0.0
+	return true
+
+
+func _resolve_hit(event: Dictionary, kind: String, quality: float) -> void:
+	if bool(event.get("_resolved", false)):
+		return
+	event["_resolved"] = true
+	event["_active"] = false
+	event["_holding"] = false
+
+	var position_value: Vector2 = _event_end_position(event)
+	var effect_kind: String = "tap"
+	if kind == "slide":
+		effect_kind = "slide"
+	elif kind == "hold":
+		effect_kind = "hold"
+	_renderer.add_effect(effect_kind, position_value, _event_color(event))
+
+	_remove_tap_node(event)
+	_clear_event_led(event)
+
+	_score_quality_sum += quality
+	_judgement_count += 1
+	_hits += 1
+	_combo += 1
+	_max_combo = maxi(_max_combo, _combo)
+	_performance = minf(100.0, _performance + (1.15 if quality >= 0.99 else 0.55))
+
+
+func _resolve_miss(event: Dictionary) -> void:
+	if bool(event.get("_resolved", false)):
+		return
+	event["_resolved"] = true
+	event["_active"] = false
+	event["_holding"] = false
+
+	var position_value: Vector2 = _event_end_position(event)
+	_renderer.add_effect("miss", position_value, Color(1.0, 0.12, 0.16, 1.0))
+	_remove_tap_node(event)
+	_clear_event_led(event)
+
+	_judgement_count += 1
+	_misses += 1
+	_combo = 0
+	_performance = maxf(0.0, _performance - 6.0)
+	if _performance <= 70.0:
+		_finish_game(true)
+
+
+func _remove_tap_node(event: Dictionary) -> void:
+	var node_value: Variant = event.get("_node", null)
+	if node_value is Node and is_instance_valid(node_value):
+		(node_value as Node).queue_free()
+	event.erase("_node")
+
+
+func _clear_event_led(event: Dictionary) -> void:
+	var type_name: String = str(event.get("type", ""))
+	if type_name == "tap" or type_name == "hold":
+		LED_CLIENT.clear_lane(int(event.get("lane", 0)))
+
+
+func _event_end_position(event: Dictionary) -> Vector2:
+	var type_name: String = str(event.get("type", "tap"))
+	if type_name == "slide":
+		var points_value: Variant = event.get("_path_points", PackedVector2Array())
+		if points_value is PackedVector2Array and not (points_value as PackedVector2Array).is_empty():
+			return (points_value as PackedVector2Array)[(points_value as PackedVector2Array).size() - 1]
+	var lane: int = clampi(int(event.get("lane", 0)), 0, NUM_LANES - 1)
+	return _lane_positions[lane]
+
+
+func _event_color(event: Dictionary) -> Color:
+	var type_name: String = str(event.get("type", "tap"))
+	if type_name == "hold":
+		return _accent_color()
+	if type_name == "slide":
+		return _primary_color()
+	return _tap_color(int(event.get("color_index", 0)))
+
+
+func _finish_game(failed: bool) -> void:
+	if _state == GameState.RESULT:
+		return
+	_state = GameState.RESULT
+	_state_time = 0.0
+	_failed = failed
+	_music_player.stop()
+	_video_player.stop()
+	_video_player.visible = false
+	_countdown_label.visible = false
+	_set_gameplay_hud_visible(false)
+	_result_panel.visible = true
+
+	var score: float = _score_percent()
+	_result_title.text = "TRACK FAILED" if failed else "TRACK CLEAR"
+	_result_score.text = "%.2f%%" % score
+	_result_details.text = (
+		"HITS %d   MISSES %d\nMAX COMBO %d\nSTART: REPLAY   B: MENU"
+		% [_hits, _misses, _max_combo]
+	)
+	_save_record(score)
+	LED_CLIENT.clear_all()
+
+
+func _update_hud() -> void:
+	if _label_score == null:
+		return
+
+	var score: float = _score_percent()
+	_label_score.text = "%.2f%%" % score
+	_label_combo.text = "COMBO %d" % _combo
+	_label_performance.text = "LIFE %d%%" % int(round(_performance))
+	_label_performance.add_theme_color_override(
+		"font_color",
+		_primary_color() if _performance > 78.0 else Color(1.0, 0.15, 0.18, 1.0)
+	)
+
+	var current_seconds: int = int(round(_song_time))
+	var total_seconds: int = int(round(_song_duration))
+	_label_time.text = "%d:%02d / %d:%02d" % [
+		int(current_seconds / 60),
+		current_seconds % 60,
+		int(total_seconds / 60),
+		total_seconds % 60,
+	]
+	_progress_bar.value = clampf(_song_time / maxf(_song_duration, 0.001), 0.0, 1.0)
+
+
+func _score_percent() -> float:
+	if _judgement_count <= 0:
+		return 100.0
+	return 100.0 * _score_quality_sum / float(_judgement_count)
+
+
+func _save_record(score: float) -> void:
+	var data: Dictionary = {}
+	if FileAccess.file_exists(RECORD_PATH):
+		var read_file := FileAccess.open(RECORD_PATH, FileAccess.READ)
+		if read_file != null:
+			var parsed: Variant = JSON.parse_string(read_file.get_as_text())
+			if parsed is Dictionary:
+				data = parsed as Dictionary
+
+	var song_id: String = str(_song.get("id", _song_id()))
+	var current_value: Variant = data.get(song_id, {})
+	var song_record: Dictionary = {}
+	if current_value is Dictionary:
+		song_record = current_value as Dictionary
+	var key: String = "dificil" if _difficulty_name == "hard" else "facil"
+	song_record[key] = maxf(float(song_record.get(key, 0.0)), score)
+	data[song_id] = song_record
+
+	var write_file := FileAccess.open(RECORD_PATH, FileAccess.WRITE)
+	if write_file != null:
+		write_file.store_string(JSON.stringify(data, "\t"))
+
+
+func _go_to_selector() -> void:
+	LED_CLIENT.clear_all()
+	get_tree().change_scene_to_file("res://scenes/change_scenes.tscn")
+
+
+func _on_viewport_size_changed() -> void:
+	_calculate_geometry()
+	if _video_player != null:
+		_video_player.position = _video_rect.position
+		_video_player.size = _video_rect.size
+	if _countdown_label != null and _top_panel != null:
+		_countdown_label.position = _top_panel.position
+		_countdown_label.size = _top_panel.size
+	if _cover != null:
+		_cover.position = _center - Vector2(_radius * 0.72, _radius * 0.58)
+		_cover.size = Vector2(_radius * 1.44, _radius * 1.16)
+	if _renderer != null:
+		_renderer.configure(_center, _radius, _lane_positions, _song, _difficulty)
+	queue_redraw()
+
+
+func _nearest_lane(position_value: Vector2) -> int:
+	var best_lane: int = -1
+	var best_distance: float = INF
+	for lane in range(_lane_positions.size()):
+		var distance_value: float = _lane_positions[lane].distance_to(position_value)
+		if distance_value < best_distance:
+			best_distance = distance_value
+			best_lane = lane
+	return best_lane if best_distance <= _radius * 0.14 else -1
+
+
+func _state_name() -> String:
+	match _state:
+		GameState.COUNTDOWN:
+			return "countdown"
+		GameState.PLAYING:
+			return "playing"
+		GameState.RESULT:
+			return "result"
 		_:
-			return Color(0.08, 0.92, 1.0, 1.0)
+			return "presentation"
 
 
-func _find_sprite(node: Node) -> AnimatedSprite2D:
-	if node is AnimatedSprite2D:
-		return node as AnimatedSprite2D
-	for child in node.get_children():
-		var result: AnimatedSprite2D = _find_sprite(child)
-		if result != null:
-			return result
-	return null
+func _action_pressed(action: String) -> bool:
+	return InputMap.has_action(action) and Input.is_action_just_pressed(action)
+
+
+func _primary_color() -> Color:
+	var value: Variant = _song.get("colors", {})
+	if value is Dictionary:
+		return (value as Dictionary).get("primary", Color(0.05, 0.92, 1.0, 1.0))
+	return Color(0.05, 0.92, 1.0, 1.0)
+
+
+func _secondary_color() -> Color:
+	var value: Variant = _song.get("colors", {})
+	if value is Dictionary:
+		return (value as Dictionary).get("secondary", Color.WHITE)
+	return Color.WHITE
+
+
+func _accent_color() -> Color:
+	var value: Variant = _song.get("colors", {})
+	if value is Dictionary:
+		return (value as Dictionary).get("accent", Color(1.0, 0.84, 0.05, 1.0))
+	return Color(1.0, 0.84, 0.05, 1.0)
+
+
+func _dark_color() -> Color:
+	var value: Variant = _song.get("colors", {})
+	if value is Dictionary:
+		return (value as Dictionary).get("dark", Color(0.01, 0.02, 0.05, 1.0))
+	return Color(0.01, 0.02, 0.05, 1.0)
+
+
+func _tap_color(index: int) -> Color:
+	match index % 3:
+		0:
+			return _accent_color()
+		1:
+			return _primary_color()
+		_:
+			return Color(1.0, 0.18, 0.55, 1.0)
+
+
+func _load_font() -> Font:
+	var path: String = "res://fonts/Bungee-Regular.ttf"
+	if ResourceLoader.exists(path):
+		var resource: Resource = load(path)
+		if resource is Font:
+			return resource as Font
+	return ThemeDB.fallback_font
+
+
+func _make_label(
+	text_value: String,
+	font_size: int,
+	alignment: HorizontalAlignment,
+	font: Font
+) -> Label:
+	var label := Label.new()
+	label.text = text_value
+	label.horizontal_alignment = alignment
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_override("font", font)
+	label.add_theme_font_size_override("font_size", maxi(12, font_size))
+	label.add_theme_color_override("font_color", Color.WHITE)
+	label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.95))
+	label.add_theme_constant_override("outline_size", 3)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return label
+
+
+func _top_panel_style() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.005, 0.010, 0.024, 0.40)
+	style.border_color = Color(
+		_primary_color().r,
+		_primary_color().g,
+		_primary_color().b,
+		0.72
+	)
+	style.set_border_width_all(3)
+	style.set_corner_radius_all(26)
+	style.shadow_color = Color(
+		_primary_color().r,
+		_primary_color().g,
+		_primary_color().b,
+		0.18
+	)
+	style.shadow_size = 16
+	return style
+
+
+func _progress_background_style() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(1.0, 1.0, 1.0, 0.10)
+	style.set_corner_radius_all(8)
+	return style
+
+
+func _progress_fill_style() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = _primary_color()
+	style.set_corner_radius_all(8)
+	style.shadow_color = Color(
+		_primary_color().r,
+		_primary_color().g,
+		_primary_color().b,
+		0.36
+	)
+	style.shadow_size = 6
+	return style
+
+
+func _result_panel_style() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.006, 0.010, 0.022, 0.96)
+	style.border_color = _primary_color()
+	style.set_border_width_all(4)
+	style.set_corner_radius_all(22)
+	style.shadow_color = Color(
+		_primary_color().r,
+		_primary_color().g,
+		_primary_color().b,
+		0.28
+	)
+	style.shadow_size = 16
+	return style
 '@
 
 Write-Utf8NoBom (Project-Path "scripts\hit_music_r7\playfield_renderer.gd") @'
@@ -376,7 +1430,6 @@ func _draw() -> void:
 
 	_draw_circle_base()
 	_draw_theme_geometry()
-	_draw_video_frame()
 	_draw_inner_technical_rings()
 	_draw_ring()
 	_draw_lane_energy()
@@ -438,23 +1491,39 @@ func _beat_pulse() -> float:
 
 func _draw_circle_base() -> void:
 	var pulse: float = _beat_pulse()
-	draw_circle(center, radius * 0.996, Color(0.002, 0.004, 0.012, 1.0), true)
+	var base_alpha: float = 0.50 if game_state == "selector" else 1.0
+	draw_circle(
+		center,
+		radius * 0.995,
+		Color(0.002, 0.004, 0.012, base_alpha),
+		true
+	)
 	draw_circle(
 		center,
 		radius * (0.86 + pulse * 0.012),
-		Color(_primary().r, _primary().g, _primary().b, 0.025 + pulse * 0.018),
+		Color(_primary().r, _primary().g, _primary().b, 0.022 + pulse * 0.018),
 		true
 	)
 
 
 func _draw_theme_geometry() -> void:
-	var pattern: String = str(song.get("pattern", "diamonds")).to_lower()
+	var configured_pattern: String = str(song.get("pattern", "diamonds")).to_lower()
 	var intensity: float = clampf(float(difficulty.get("background_intensity", 0.18)), 0.04, 0.38)
 	var time_value: float = _idle_time()
 	var speed: float = float(difficulty.get("background_speed", 0.22))
 	var rotation: float = time_value * speed
 	var beat: float = _beat_pulse()
-	var section: int = int(floor(time_value / 12.0)) % 4
+	var section: int = int(floor(time_value / 10.0)) % 4
+	var pattern: String = configured_pattern
+
+	match section:
+		1:
+			pattern = "radial"
+		2:
+			pattern = "diamonds"
+		3:
+			pattern = "hex" if configured_pattern != "hex" else "grid"
+
 	var primary: Color = _primary()
 	var secondary: Color = _secondary()
 	var accent: Color = _accent()
@@ -593,50 +1662,6 @@ func _draw_orbit_nodes(rotation: float, intensity: float, color: Color) -> void:
 		)
 
 
-func _draw_video_frame() -> void:
-	var rect := Rect2(
-		center - Vector2(radius * 0.755, radius * 0.295),
-		Vector2(radius * 1.51, radius * 0.59)
-	)
-	var primary: Color = _primary()
-	var beat: float = _beat_pulse()
-
-	_video_style.border_color = Color(
-		primary.r,
-		primary.g,
-		primary.b,
-		0.44 + beat * 0.18
-	)
-	_video_style.shadow_color = Color(
-		primary.r,
-		primary.g,
-		primary.b,
-		0.13 + beat * 0.08
-	)
-	_video_style.shadow_size = int(maxf(8.0, radius * (0.018 + beat * 0.008)))
-	draw_style_box(_video_style, rect.grow(radius * 0.012))
-	draw_style_box(_video_inner_style, rect.grow(-radius * 0.009))
-
-	var top_left: Vector2 = rect.position
-	var top_right: Vector2 = rect.position + Vector2(rect.size.x, 0.0)
-	draw_line(
-		top_left + Vector2(radius * 0.05, 0.0),
-		top_right - Vector2(radius * 0.05, 0.0),
-		Color.WHITE,
-		maxf(1.0, radius * 0.002),
-		true
-	)
-
-	for index in range(4):
-		var x: float = rect.position.x + rect.size.x * (0.16 + float(index) * 0.22)
-		draw_circle(
-			Vector2(x, rect.position.y + radius * 0.015),
-			maxf(1.5, radius * 0.004),
-			Color(primary.r, primary.g, primary.b, 0.46),
-			true
-		)
-
-
 func _draw_inner_technical_rings() -> void:
 	var time_value: float = _idle_time()
 	var primary: Color = _primary()
@@ -663,19 +1688,19 @@ func _draw_inner_technical_rings() -> void:
 
 func _draw_ring() -> void:
 	var ring_radius: float = radius * 0.905
-	var width: float = maxf(3.5, radius * 0.0070)
-	var marker_radius: float = maxf(7.0, radius * 0.022)
+	var width: float = maxf(4.0, radius * 0.0072)
+	var marker_radius: float = maxf(6.0, radius * 0.0195)
 	var pulse: float = _beat_pulse()
 	var primary: Color = _primary()
 
 	draw_arc(
 		center,
-		ring_radius + radius * 0.006,
+		ring_radius + radius * 0.004,
 		0.0,
 		TAU,
-		288,
-		Color(primary.r, primary.g, primary.b, 0.12 + pulse * 0.08),
-		width * 4.5,
+		320,
+		Color(primary.r, primary.g, primary.b, 0.10 + pulse * 0.05),
+		width * 3.4,
 		true
 	)
 	draw_arc(
@@ -683,37 +1708,21 @@ func _draw_ring() -> void:
 		ring_radius,
 		0.0,
 		TAU,
-		288,
+		320,
 		Color.WHITE,
 		width,
-		true
-	)
-	draw_arc(
-		center,
-		ring_radius - width * 1.5,
-		0.0,
-		TAU,
-		288,
-		Color(primary.r, primary.g, primary.b, 0.46),
-		maxf(1.2, width * 0.24),
 		true
 	)
 
 	for position_value in lane_positions:
 		draw_circle(
 			position_value,
-			marker_radius * 2.15,
-			Color(primary.r, primary.g, primary.b, 0.08),
-			true
-		)
-		draw_circle(
-			position_value,
-			marker_radius * 1.48,
-			Color(1.0, 1.0, 1.0, 0.10),
+			marker_radius * 1.75,
+			Color(1.0, 1.0, 1.0, 0.08),
 			true
 		)
 		draw_circle(position_value, marker_radius, Color.WHITE, true)
-		draw_circle(position_value, marker_radius * 0.28, _dark(), true)
+
 
 
 func _draw_lane_energy() -> void:
@@ -785,10 +1794,10 @@ func _draw_hold(event: Dictionary) -> void:
 		head = target
 
 	var remaining: float = 1.0 - hold_progress
-	var length: float = radius * (0.46 if song_time < hit_time else maxf(0.072, 0.46 * remaining))
+	var length: float = radius * (0.52 if song_time < hit_time else maxf(0.085, 0.52 * remaining))
 	var tail: Vector2 = head - direction * length
-	var width: float = radius * 0.058 * float(difficulty.get("hold_width", 1.0))
-	var color: Color = _accent()
+	var width: float = radius * 0.071 * float(difficulty.get("hold_width", 1.0))
+	var color: Color = Color(1.0, 0.83, 0.08, 1.0)
 	var holding: bool = bool(event.get("_holding", false))
 	if holding:
 		color = color.lerp(Color.WHITE, 0.16)
@@ -889,8 +1898,8 @@ func _draw_slide(event: Dictionary) -> void:
 	if song_time < hit_time - approach or song_time > end_time + 0.35:
 		return
 
-	var color: Color = _primary()
-	var accent: Color = _accent()
+	var color: Color = Color(0.04, 0.93, 1.0, 1.0)
+	var accent: Color = Color(0.82, 1.0, 1.0, 1.0)
 	var visual_progress: float = clampf(float(event.get("_visual_progress", 0.0)), 0.0, 1.0)
 	var active: bool = bool(event.get("_active", false))
 	var arrows_from: float = visual_progress if active else 0.0
@@ -932,7 +1941,7 @@ func _draw_slide(event: Dictionary) -> void:
 	_draw_star(
 		star_position,
 		tangent.angle(),
-		radius * 0.088 * float(difficulty.get("star_scale", 1.0)),
+		radius * 0.105 * float(difficulty.get("star_scale", 1.0)),
 		color,
 		accent
 	)
@@ -962,7 +1971,7 @@ func _draw_chevrons(
 	color: Color,
 	accent: Color
 ) -> void:
-	var spacing: float = radius * 0.047
+	var spacing: float = radius * 0.052
 	var estimated_length: float = 0.0
 	for index in range(points.size() - 1):
 		estimated_length += points[index].distance_to(points[index + 1])
@@ -976,7 +1985,7 @@ func _draw_chevrons(
 		var tangent: Vector2 = PATH_BUILDER.tangent_at(points, progress)
 		var mix_value: float = 0.10 + 0.18 * float(index % 3)
 		var arrow_color: Color = color.lerp(accent, mix_value)
-		_draw_chevron(position_value, tangent, radius * 0.046, arrow_color)
+		_draw_chevron(position_value, tangent, radius * 0.058, arrow_color)
 
 
 func _draw_chevron(
@@ -987,61 +1996,51 @@ func _draw_chevron(
 ) -> void:
 	var tangent: Vector2 = direction.normalized()
 	var perpendicular := Vector2(-tangent.y, tangent.x)
-	var length: float = size * 2.05
-	var width: float = size * 1.02
-	var tip: Vector2 = position_value + tangent * length * 0.58
-	var back: Vector2 = position_value - tangent * length * 0.42
-	var notch: Vector2 = position_value - tangent * length * 0.02
+	var length: float = size * 2.10
+	var half_height: float = size * 0.88
+
+	var tip: Vector2 = position_value + tangent * length * 0.62
+	var rear: Vector2 = position_value - tangent * length * 0.48
+	var inner: Vector2 = position_value - tangent * length * 0.02
 
 	var polygon := PackedVector2Array([
-		back + perpendicular * width,
-		notch + perpendicular * width * 0.47,
+		rear + perpendicular * half_height,
+		inner + perpendicular * half_height * 0.42,
 		tip,
-		notch - perpendicular * width * 0.47,
-		back - perpendicular * width,
-		back - tangent * length * 0.14,
-		position_value - tangent * length * 0.02,
-		back - tangent * length * 0.14,
+		inner - perpendicular * half_height * 0.42,
+		rear - perpendicular * half_height,
+		position_value - tangent * length * 0.20,
 	])
 
+	var shadow_offset := Vector2(radius * 0.009, radius * 0.010)
 	var shadow := PackedVector2Array()
-	var shadow_offset := Vector2(radius * 0.008, radius * 0.009)
 	for point in polygon:
 		shadow.append(point + shadow_offset)
 
-	draw_colored_polygon(shadow, Color(0.0, 0.0, 0.0, 0.92))
-	draw_polyline(
-		PackedVector2Array([
-			shadow[0],
-			shadow[1],
-			shadow[2],
-			shadow[3],
-			shadow[4],
-		]),
-		Color(0.0, 0.0, 0.0, 0.98),
-		maxf(4.0, size * 0.20),
-		true
-	)
+	draw_colored_polygon(shadow, Color(0.0, 0.0, 0.0, 0.96))
 	draw_colored_polygon(polygon, color)
+
+	var outline := polygon.duplicate()
+	outline.append(outline[0])
 	draw_polyline(
-		PackedVector2Array([
-			polygon[0],
-			polygon[1],
-			polygon[2],
-			polygon[3],
-			polygon[4],
-		]),
-		Color(0.86, 1.0, 1.0, 0.96),
-		maxf(2.0, size * 0.10),
+		outline,
+		Color(0.01, 0.04, 0.07, 0.98),
+		maxf(5.0, size * 0.19),
 		true
 	)
-	draw_line(
-		back,
-		tip - tangent * length * 0.18,
-		Color.WHITE,
-		maxf(1.2, size * 0.055),
+
+	var highlight := PackedVector2Array([
+		rear + perpendicular * half_height * 0.58,
+		inner + perpendicular * half_height * 0.22,
+		tip - tangent * length * 0.10,
+	])
+	draw_polyline(
+		highlight,
+		Color(0.90, 1.0, 1.0, 0.98),
+		maxf(2.0, size * 0.075),
 		true
 	)
+
 
 
 func _draw_star(
@@ -1388,7 +2387,7 @@ const SIDE_MARGIN_RATIO: float = 0.015
 const BOTTOM_MARGIN_RATIO: float = 0.012
 const CIRCLE_SCALE: float = 0.985
 const PREVIEW_DELAY: float = 0.75
-const PREVIEW_ALPHA: float = 0.48
+const PREVIEW_ALPHA: float = 0.62
 const CARD_SPACING_RATIO: float = 0.205
 
 var _songs: Array = []
@@ -1607,8 +2606,8 @@ func _calculate_geometry() -> void:
 		)
 
 	_video_rect = Rect2(
-		_center - Vector2(_radius * 0.755, _radius * 0.295),
-		Vector2(_radius * 1.51, _radius * 0.59)
+		_center - Vector2.ONE * _radius,
+		Vector2.ONE * (_radius * 2.0)
 	)
 
 
@@ -1621,6 +2620,7 @@ func _build_scene() -> void:
 	_video.volume_db = -80.0
 	_video.modulate.a = 0.0
 	_video.z_index = 2
+	_video.material = _circular_video_material()
 	add_child(_video)
 
 	_renderer = RENDERER_SCRIPT.new()
@@ -2095,6 +3095,23 @@ func _action_pressed(action: String) -> bool:
 	return InputMap.has_action(action) and Input.is_action_just_pressed(action)
 
 
+func _circular_video_material() -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = """
+shader_type canvas_item;
+
+void fragment() {
+	vec4 source_color = texture(TEXTURE, UV);
+	float distance_value = distance(UV, vec2(0.5));
+	float mask_value = 1.0 - smoothstep(0.488, 0.500, distance_value);
+	COLOR = vec4(source_color.rgb, source_color.a * mask_value);
+}
+"""
+	var material := ShaderMaterial.new()
+	material.shader = shader
+	return material
+
+
 func _load_font() -> Font:
 	for path in [
 		"res://fonts/Bungee-Regular.ttf",
@@ -2272,10 +3289,10 @@ extends "res://scripts/hit_music_r7/selector.gd"
 '@
 
 Write-Host ""
-Write-Host "Validando arquivos criados..." -ForegroundColor Yellow
+Write-Host "VALIDANDO ARQUIVOS GERADOS:" -ForegroundColor Cyan
 
 $GeneratedFiles = @(
-    "scripts\hit_music_r7\tap_visual.gd",
+    "scripts\hit_music_r7\stage.gd",
     "scripts\hit_music_r7\playfield_renderer.gd",
     "scripts\hit_music_r7\selector.gd",
     "scripts\change_scenes.gd"
@@ -2283,30 +3300,62 @@ $GeneratedFiles = @(
 
 foreach ($RelativePath in $GeneratedFiles) {
     $FullPath = Project-Path $RelativePath
+
     if (-not (Test-Path -LiteralPath $FullPath)) {
         throw "Falha ao criar: $RelativePath"
     }
+
     $Length = (Get-Item -LiteralPath $FullPath).Length
-    if ($Length -le 10) {
+    if ($Length -le 20) {
         throw "Arquivo criado com tamanho invalido: $RelativePath"
     }
-    Write-Host "[OK] $RelativePath ($Length bytes)" -ForegroundColor Green
+
+    Write-Host "[OK] $RelativePath - $Length bytes" -ForegroundColor Green
 }
 
-if ($GitAvailable -and (Test-Path -LiteralPath (Project-Path ".git"))) {
-    git add scripts/hit_music_r7/tap_visual.gd
+$RendererContent = Get-Content -LiteralPath (Project-Path "scripts\hit_music_r7\playfield_renderer.gd") -Raw
+$StageContent = Get-Content -LiteralPath (Project-Path "scripts\hit_music_r7\stage.gd") -Raw
+$SelectorContent = Get-Content -LiteralPath (Project-Path "scripts\hit_music_r7\selector.gd") -Raw
+
+if ($RendererContent -match "_draw_video_frame") {
+    throw "A faixa central antiga ainda existe no renderer."
+}
+
+if ($StageContent -notmatch "_rounded_video_material") {
+    throw "A mascara arredondada do video superior nao foi criada."
+}
+
+if ($SelectorContent -notmatch "_circular_video_material") {
+    throw "A mascara circular do preview do menu nao foi criada."
+}
+
+if ($RendererContent -notmatch "draw_arc\(\s*center,\s*ring_radius") {
+    throw "O arco circular conectado nao foi localizado."
+}
+
+if ($GitAvailable -and $GitRepository) {
+    git add scripts/hit_music_r7/stage.gd
     git add scripts/hit_music_r7/playfield_renderer.gd
     git add scripts/hit_music_r7/selector.gd
     git add scripts/change_scenes.gd
-    git commit -m "Upgrade R7 with pro effects and modern rounded selector"
+    git commit -m "R8 remove central video band and refine maimai style effects"
 }
 
 Write-Host ""
-Write-Host "========================================================" -ForegroundColor Green
-Write-Host " R7 EFFECTS PRO APLICADO COM SUCESSO" -ForegroundColor Green
-Write-Host "========================================================" -ForegroundColor Green
+Write-Host "==========================================================" -ForegroundColor Green
+Write-Host " R8 APLICADO COM SUCESSO" -ForegroundColor Green
+Write-Host "==========================================================" -ForegroundColor Green
 Write-Host "Backup local: $BackupRoot"
-Write-Host "Branch: r7-effects-pro"
+Write-Host "Branch: r8-reference-precision"
+Write-Host ""
+Write-Host "CORRECOES PRINCIPAIS:" -ForegroundColor Cyan
+Write-Host "- Remove a faixa de video do centro do circulo."
+Write-Host "- Coloca video e contagem no retangulo superior."
+Write-Host "- Preview do menu ocupa o fundo circular e deixa de ficar escondido."
+Write-Host "- Arco branco fica totalmente conectado."
+Write-Host "- Oito bolinhas fixas marcam os destinos."
+Write-Host "- Nenhum tazo fica parado esperando na borda."
+Write-Host "- Setas, estrela e hold ficam maiores e mais nitidos."
+Write-Host "- Fundo muda de desenho a cada secao da musica."
 Write-Host ""
 Write-Host "Abra o Godot, aguarde a importacao e rode com F5." -ForegroundColor Yellow
-Write-Host "Nao apague o backup antes de testar Carmine e o seletor." -ForegroundColor Yellow
