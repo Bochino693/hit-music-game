@@ -3,8 +3,6 @@ extends RefCounted
 const MENU_NEXT_COLOR: Color = Color(0.0, 0.72, 1.0, 1.0)
 const MENU_SELECT_COLOR: Color = Color(1.0, 0.82, 0.08, 1.0)
 
-static var _command_sequence: int = 0
-
 
 static func clear_all() -> void:
 	send_raw("CLEAR")
@@ -110,10 +108,8 @@ static func send_raw(command: String) -> void:
 	var spool_dir: String = base_dir.path_join("spool")
 	DirAccess.make_dir_recursive_absolute(spool_dir)
 
-	_command_sequence += 1
-	var name: String = "cmd_%020d_%06d_%d.cmd" % [
+	var name: String = "cmd_%020d_%d.cmd" % [
 		Time.get_ticks_usec(),
-		_command_sequence,
 		OS.get_process_id(),
 	]
 	var final_path: String = spool_dir.path_join(name)
