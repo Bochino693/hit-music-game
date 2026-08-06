@@ -29,3 +29,5 @@ _backup_hit_music_*/
 _hit_music_backup_*/
 _hit_music_restauracao_atual/
 *.tmp
+
+backup-r*-*

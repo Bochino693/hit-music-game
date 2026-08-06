@@ -1,7 +1,6 @@
 extends Node2D
 
 const CATALOG: Script = preload("res://scripts/hit_music_r7/catalog.gd")
-const RENDERER_SCRIPT: Script = preload("res://scripts/hit_music_r7/playfield_renderer.gd")
 const LED_CLIENT: Script = preload("res://scripts/hit_music_r7/led_client.gd")
 
 const TOP_MARGIN_RATIO: float = 0.022
@@ -26,7 +25,7 @@ var _transitioning: bool = false
 var _visual_time: float = 0.0
 
 var _video: VideoStreamPlayer
-var _renderer
+var _preview_audio: AudioStreamPlayer
 var _ui: CanvasLayer
 var _top_panel: Panel
 var _brand_label: Label
@@ -102,6 +101,8 @@ func _process(delta: float) -> void:
 		_preview_wait += delta
 		if _preview_wait >= PREVIEW_DELAY and _video.stream != null and not _video.is_playing():
 			_video.play()
+			if _preview_audio.stream != null:
+				_preview_audio.play()
 			var preview_tween: Tween = create_tween()
 			preview_tween.set_trans(Tween.TRANS_QUINT)
 			preview_tween.set_ease(Tween.EASE_OUT)
@@ -109,7 +110,6 @@ func _process(delta: float) -> void:
 
 	_update_card_animation(delta)
 	_update_live_styles()
-	_renderer.set_runtime([], _visual_time, "selector", Vector2.ZERO, false)
 	queue_redraw()
 
 
@@ -120,7 +120,7 @@ func _draw() -> void:
 	var pulse: float = 0.5 + 0.5 * sin(_visual_time * 1.7)
 
 	draw_rect(Rect2(Vector2.ZERO, screen), Color.BLACK, true)
-	draw_circle(_center, _radius * 1.028, Color(primary.r, primary.g, primary.b, 0.055), true)
+	draw_circle(_center, _radius * 1.028, Color(primary.r, primary.g, primary.b, 0.040), true)
 	draw_circle(_center, _radius * 1.010, Color(0.0, 0.0, 0.0, 0.98), true)
 	draw_circle(_center, _radius * 0.997, _dark_color(), true)
 
@@ -145,21 +145,25 @@ func _draw() -> void:
 		true
 	)
 
-	for index in range(32):
-		var angle: float = TAU * float(index) / 32.0
+	# Fundo exclusivo do seletor: radar quadrado + constelacao orbital.
+	# Sao poucas primitivas, sem o renderer pesado do gameplay.
+	var grid_rotation: float = _visual_time * 0.035
+	for layer in range(1, 5):
+		var half_size: float = _radius * (0.16 + float(layer) * 0.15)
+		var points := PackedVector2Array()
+		for corner in range(5):
+			var square_angle: float = grid_rotation * (-1.0 if layer % 2 == 0 else 1.0) + PI * 0.25 + TAU * float(corner) / 4.0
+			points.append(_center + Vector2(cos(square_angle), sin(square_angle)) * half_size)
+		draw_polyline(points, Color(primary.r, primary.g, primary.b, 0.055 + float(layer) * 0.012), maxf(1.0, _radius * 0.0018), true)
+
+	for index in range(24):
+		var angle: float = -_visual_time * 0.055 + TAU * float(index) / 24.0
 		var direction := Vector2(cos(angle), sin(angle))
-		var inner: Vector2 = _center + direction * _radius * 0.953
-		var outer: Vector2 = _center + direction * _radius * (
-			0.970 + 0.006 * absf(sin(_visual_time * 1.2 + float(index)))
-		)
+		var orbit: float = _radius * (0.28 + 0.025 * float(index % 6))
+		var point_position: Vector2 = _center + direction * orbit
 		var color: Color = primary if index % 2 == 0 else accent
-		draw_line(
-			inner,
-			outer,
-			Color(color.r, color.g, color.b, 0.24),
-			maxf(1.0, _radius * 0.002),
-			true
-		)
+		var sparkle: float = 0.5 + 0.5 * sin(_visual_time * 1.8 + float(index) * 0.73)
+		draw_circle(point_position, _radius * (0.003 + sparkle * 0.002), Color(color.r, color.g, color.b, 0.28 + sparkle * 0.32), true)
 
 
 func _input(event: InputEvent) -> void:
@@ -236,6 +240,12 @@ func _calculate_geometry() -> void:
 
 
 func _build_scene() -> void:
+	_preview_audio = AudioStreamPlayer.new()
+	_preview_audio.name = "ScenarioPreviewAudio"
+	_preview_audio.bus = "Master"
+	_preview_audio.volume_db = -7.0
+	add_child(_preview_audio)
+
 	_video = VideoStreamPlayer.new()
 	_video.position = _video_rect.position
 	_video.size = _video_rect.size
@@ -246,10 +256,6 @@ func _build_scene() -> void:
 	_video.z_index = 2
 	_video.material = _circular_video_material()
 	add_child(_video)
-
-	_renderer = RENDERER_SCRIPT.new()
-	_renderer.z_index = 10
-	add_child(_renderer)
 
 	_ui = CanvasLayer.new()
 	_ui.layer = 30
@@ -263,6 +269,7 @@ func _build_scene() -> void:
 	_top_panel = Panel.new()
 	_top_panel.position = Vector2(margin, margin)
 	_top_panel.size = Vector2(screen.x - margin * 2.0, top_height)
+	_top_panel.pivot_offset = _top_panel.size * 0.5
 	_top_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ui.add_child(_top_panel)
 
@@ -329,6 +336,7 @@ func _build_scene() -> void:
 	_content_root = Control.new()
 	_content_root.position = _center - Vector2(_radius, _radius)
 	_content_root.size = Vector2(_radius * 2.0, _radius * 2.0)
+	_content_root.pivot_offset = _content_root.size * 0.5
 	_content_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ui.add_child(_content_root)
 
@@ -512,9 +520,6 @@ func _apply_selection(immediate: bool) -> void:
 		return
 
 	var song: Dictionary = _songs[_index] as Dictionary
-	var difficulty_data: Dictionary = CATALOG.get_difficulty(song, _difficulty)
-
-	_renderer.configure(_center, _radius, _lane_positions, song, difficulty_data)
 	_track_label.text = "TRACK %02d / %02d" % [_index + 1, _songs.size()]
 	_song_name.text = str(song.get("title", "TRACK"))
 	_category_label.text = "ANIME / RHYTHM"
@@ -639,6 +644,9 @@ func _load_preview(song: Dictionary) -> void:
 		_video.stop()
 	_video.stream = null
 	_video.modulate.a = 0.0
+	if _preview_audio.playing:
+		_preview_audio.stop()
+	_preview_audio.stream = null
 
 	var path: String = str(song.get("video", ""))
 	if not ResourceLoader.exists(path):
@@ -647,6 +655,12 @@ func _load_preview(song: Dictionary) -> void:
 	var resource: Resource = load(path)
 	if resource is VideoStream:
 		_video.stream = resource as VideoStream
+
+	var audio_path: String = str(song.get("audio", ""))
+	if ResourceLoader.exists(audio_path):
+		var audio_resource: Resource = load(audio_path)
+		if audio_resource is AudioStream:
+			_preview_audio.stream = audio_resource as AudioStream
 
 
 func _start_selected() -> void:
@@ -667,16 +681,19 @@ func _start_selected() -> void:
 		push_error("Scene nao encontrada: " + scene_path)
 		return
 
-	var tween: Tween = create_tween()
-	tween.set_parallel(true)
-	tween.set_trans(Tween.TRANS_QUINT)
-	tween.set_ease(Tween.EASE_IN)
-	tween.tween_property(_top_panel, "position:y", _top_panel.position.y - get_viewport_rect().size.y * 0.035, 0.30)
-	tween.tween_property(_top_panel, "modulate:a", 0.0, 0.25)
-	tween.tween_property(_content_root, "scale", Vector2(0.94, 0.94), 0.32)
-	tween.tween_property(_content_root, "modulate:a", 0.0, 0.27)
-	tween.tween_property(_video, "modulate:a", 0.0, 0.25)
-	tween.finished.connect(
+	if _preview_audio.playing:
+		var audio_fade: Tween = create_tween()
+		audio_fade.tween_property(_preview_audio, "volume_db", -28.0, 0.42)
+
+	# Transicao nos proprios elementos: nenhum desenho ou mascara por cima.
+	var exit_tween: Tween = create_tween()
+	exit_tween.set_parallel(true)
+	exit_tween.set_trans(Tween.TRANS_QUINT)
+	exit_tween.set_ease(Tween.EASE_IN_OUT)
+	exit_tween.tween_property(self, "modulate:a", 0.0, 0.48)
+	exit_tween.tween_property(_top_panel, "modulate:a", 0.0, 0.40)
+	exit_tween.tween_property(_content_root, "modulate:a", 0.0, 0.44)
+	exit_tween.finished.connect(
 		func() -> void:
 			get_tree().change_scene_to_file(scene_path)
 	)

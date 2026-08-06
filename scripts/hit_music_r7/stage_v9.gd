@@ -42,6 +42,18 @@ func _ready() -> void:
 	_select_difficulty(_difficulty_name, true)
 	_show_pre_game_overlay(true)
 	_set_center_hud_visible(false)
+	_fade_in_difficulty_panel()
+
+
+func _fade_in_difficulty_panel() -> void:
+	# Entrada suave no proprio painel; nada e desenhado sobre a tela.
+	if _pre_game_panel == null:
+		return
+	_pre_game_panel.modulate.a = 0.0
+	var tween: Tween = create_tween()
+	tween.set_trans(Tween.TRANS_QUINT)
+	tween.set_ease(Tween.EASE_OUT)
+	tween.tween_property(_pre_game_panel, "modulate:a", 1.0, 0.52)
 
 
 func _process(delta: float) -> void:
