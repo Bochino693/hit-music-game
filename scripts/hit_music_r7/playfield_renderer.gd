@@ -1,5 +1,7 @@
 extends Node2D
 
+# HIT MUSIC R11 FINAL - GEOMETRIA, BRILHO E HOLD CRISTALINO
+
 const PATH_BUILDER: Script = preload("res://scripts/hit_music_r7/path_builder.gd")
 
 var center: Vector2 = Vector2.ZERO
@@ -65,11 +67,11 @@ func set_runtime(
 
 
 func add_effect(kind: String, position_value: Vector2, color: Color) -> void:
-	var duration: float = 0.46
+	var duration: float = 0.68
 	if kind == "slide":
-		duration = 0.64
+		duration = 0.78
 	elif kind == "hold":
-		duration = 0.56
+		duration = 0.88
 	elif kind == "miss":
 		duration = 0.48
 
@@ -178,53 +180,153 @@ func _draw_circle_base() -> void:
 
 
 func _draw_theme_geometry() -> void:
-	var configured_pattern: String = str(song.get("pattern", "diamonds")).to_lower()
-	var intensity: float = clampf(float(difficulty.get("background_intensity", 0.18)), 0.04, 0.38)
+	var configured_pattern: String = str(
+		song.get("pattern", "diamonds")
+	).to_lower()
+	var intensity: float = clampf(
+		float(difficulty.get("background_intensity", 0.18)),
+		0.08,
+		0.42
+	)
 	var time_value: float = _idle_time()
-	var speed: float = float(difficulty.get("background_speed", 0.22))
+	var speed: float = float(
+		difficulty.get("background_speed", 0.22)
+	)
 	var rotation: float = time_value * speed
 	var beat: float = _beat_pulse()
-	var section: int = int(floor(time_value / 10.0)) % 4
-	var pattern: String = configured_pattern
-
-	match section:
-		1:
-			pattern = "radial"
-		2:
-			pattern = "diamonds"
-		3:
-			pattern = "hex" if configured_pattern != "hex" else "grid"
-
 	var primary: Color = _primary()
 	var secondary: Color = _secondary()
 	var accent: Color = _accent()
 
-	for ring in range(1, 6):
-		var ring_radius: float = radius * (0.13 + float(ring) * 0.115)
-		var alpha: float = intensity * (0.045 + float(ring) * 0.012) + beat * 0.018
-		draw_arc(
-			center,
-			ring_radius,
-			rotation * (0.20 if ring % 2 == 0 else -0.16),
-			TAU + rotation * (0.20 if ring % 2 == 0 else -0.16),
-			120,
-			Color(primary.r, primary.g, primary.b, alpha),
-			maxf(1.0, radius * 0.0017),
-			true
+	# Fundo totalmente geometrico: sem arcos cortados.
+	# Cada camada forma uma mandala completa de cristais.
+	for layer in range(1, 7):
+		var layer_radius: float = radius * (
+			0.10 + float(layer) * 0.115
+		)
+		var count: int = 8 + layer * 2
+		var direction_sign: float = (
+			1.0 if layer % 2 == 0 else -1.0
+		)
+		var layer_rotation: float = (
+			rotation * direction_sign * (0.35 + float(layer) * 0.04)
 		)
 
-	match pattern:
-		"hex":
-			_draw_hex_field(rotation, intensity, primary, accent, section)
-		"radial":
-			_draw_radial_field(rotation, intensity, primary, secondary, beat)
-		"grid":
-			_draw_grid_field(rotation, intensity, primary, accent)
-		_:
-			_draw_diamond_field(rotation, intensity, primary, secondary, section)
+		for index in range(count):
+			var angle: float = (
+				layer_rotation
+				+ TAU * float(index) / float(count)
+			)
+			var direction: Vector2 = Vector2(
+				cos(angle),
+				sin(angle)
+			)
+			var position_value: Vector2 = (
+				center + direction * layer_radius
+			)
+			var size: float = radius * (
+				0.024 + float(layer) * 0.0032
+			)
+			var mix_value: float = float(
+				(index + layer) % 4
+			) / 4.0
+			var color: Color = primary.lerp(
+				accent,
+				mix_value * 0.55
+			)
+			color.a = (
+				intensity * (0.34 + float(layer) * 0.035)
+				+ beat * 0.035
+			)
 
-	_draw_orbit_nodes(rotation, intensity, accent)
+			match configured_pattern:
+				"hex":
+					_draw_regular_polygon(
+						position_value,
+						size,
+						6,
+						angle + rotation * 0.16,
+						color,
+						maxf(1.5, radius * 0.0028)
+					)
+				"radial":
+					_draw_regular_polygon(
+						position_value,
+						size,
+						8,
+						angle,
+						color,
+						maxf(1.5, radius * 0.0028)
+					)
+				"grid":
+					_draw_rotated_diamond(
+						position_value,
+						size * 1.10,
+						angle + PI * 0.25,
+						color,
+						maxf(1.5, radius * 0.0028)
+					)
+				_:
+					_draw_rotated_diamond(
+						position_value,
+						size * 1.18,
+						angle + PI * 0.25,
+						color,
+						maxf(1.5, radius * 0.0030)
+					)
 
+			if layer >= 3 and index % 2 == 0:
+				var inner_position: Vector2 = (
+					center + direction * (layer_radius - radius * 0.070)
+				)
+				draw_line(
+					inner_position,
+					position_value,
+					Color(
+						color.r,
+						color.g,
+						color.b,
+						intensity * 0.16
+					),
+					maxf(1.0, radius * 0.0018),
+					true
+				)
+
+	# Flor central geometrica, inteira e brilhante.
+	for petal in range(8):
+		var petal_angle: float = (
+			-rotation * 0.55
+			+ TAU * float(petal) / 8.0
+		)
+		var petal_position: Vector2 = (
+			center
+			+ Vector2(cos(petal_angle), sin(petal_angle))
+			* radius * 0.105
+		)
+		_draw_rotated_diamond(
+			petal_position,
+			radius * (0.050 + beat * 0.006),
+			petal_angle + PI * 0.25,
+			Color(primary.r, primary.g, primary.b, 0.30),
+			maxf(2.0, radius * 0.0040)
+		)
+
+	_draw_regular_polygon(
+		center,
+		radius * (0.095 + beat * 0.008),
+		8,
+		rotation * 0.28,
+		Color(secondary.r, secondary.g, secondary.b, 0.28),
+		maxf(2.0, radius * 0.0042)
+	)
+	_draw_regular_polygon(
+		center,
+		radius * (0.062 + beat * 0.006),
+		6,
+		-rotation * 0.45,
+		Color(accent.r, accent.g, accent.b, 0.42),
+		maxf(2.0, radius * 0.0045)
+	)
 
 func _draw_diamond_field(
 	rotation: float,
@@ -338,24 +440,41 @@ func _draw_inner_technical_rings() -> void:
 	var primary: Color = _primary()
 	var accent: Color = _accent()
 
-	for ring in range(3):
-		var ring_radius: float = radius * (0.34 + float(ring) * 0.12)
-		var start_angle: float = time_value * (0.18 + float(ring) * 0.05)
-		for segment in range(8):
-			var angle_a: float = start_angle + TAU * float(segment) / 8.0
-			var angle_b: float = angle_a + TAU / 8.0 * 0.56
-			var color: Color = primary if (segment + ring) % 2 == 0 else accent
-			draw_arc(
-				center,
-				ring_radius,
-				angle_a,
-				angle_b,
-				18,
-				Color(color.r, color.g, color.b, 0.075),
-				maxf(1.0, radius * 0.002),
-				true
-			)
+	# Substitui os antigos segmentos redondos por molduras poligonais.
+	for layer in range(3):
+		var sides: int = 8 if layer != 1 else 12
+		var layer_size: float = radius * (
+			0.34 + float(layer) * 0.13
+		)
+		var rotation_value: float = time_value * (
+			0.055 + float(layer) * 0.025
+		)
+		var color: Color = primary if layer % 2 == 0 else accent
+		_draw_regular_polygon(
+			center,
+			layer_size,
+			sides,
+			rotation_value * (1.0 if layer % 2 == 0 else -1.0),
+			Color(color.r, color.g, color.b, 0.11),
+			maxf(1.0, radius * 0.0023)
+		)
 
+		for node_index in range(sides):
+			var angle: float = (
+				rotation_value
+				+ TAU * float(node_index) / float(sides)
+			)
+			var node_position: Vector2 = (
+				center
+				+ Vector2(cos(angle), sin(angle)) * layer_size
+			)
+			_draw_rotated_diamond(
+				node_position,
+				radius * 0.014,
+				angle + PI * 0.25,
+				Color(color.r, color.g, color.b, 0.18),
+				maxf(1.0, radius * 0.0020)
+			)
 
 func _draw_ring() -> void:
 	var ring_radius: float = radius * 0.905
@@ -467,7 +586,7 @@ func _draw_hold(event: Dictionary) -> void:
 	var remaining: float = 1.0 - hold_progress
 	var length: float = radius * (0.52 if song_time < hit_time else maxf(0.085, 0.52 * remaining))
 	var tail: Vector2 = head - direction * length
-	var width: float = radius * 0.071 * float(difficulty.get("hold_width", 1.0))
+	var width: float = radius * 0.092 * float(difficulty.get("hold_width", 1.0))
 	var color: Color = Color(1.0, 0.83, 0.08, 1.0)
 	var holding: bool = bool(event.get("_holding", false))
 	if holding:
@@ -484,72 +603,124 @@ func _draw_capsule(
 	active: bool,
 	progress: float
 ) -> void:
+	# HOLD CRISTALINO: trilho geometrico em vez de tubo arredondado.
 	var direction: Vector2 = (head - tail).normalized()
+	var normal: Vector2 = Vector2(-direction.y, direction.x)
 	var length: float = tail.distance_to(head)
-	var glow: float = 0.30 if active else 0.17
-	var dark: Color = Color(0.003, 0.006, 0.018, 0.98)
+	var angle: float = direction.angle()
+	var glow_alpha: float = 0.42 if active else 0.24
+	var core_alpha: float = 0.96 if active else 0.78
 
-	draw_line(tail, head, Color(color.r, color.g, color.b, glow), half_width * 4.7, true)
-	draw_circle(tail, half_width * 2.35, Color(color.r, color.g, color.b, glow), true)
-	draw_circle(head, half_width * 2.35, Color(color.r, color.g, color.b, glow), true)
+	# Aura larga e dois trilhos luminosos.
+	draw_line(
+		tail,
+		head,
+		Color(color.r, color.g, color.b, glow_alpha * 0.34),
+		half_width * 5.2,
+		true
+	)
+	draw_line(
+		tail + normal * half_width * 0.62,
+		head + normal * half_width * 0.62,
+		Color.WHITE,
+		maxf(2.0, half_width * 0.23),
+		true
+	)
+	draw_line(
+		tail - normal * half_width * 0.62,
+		head - normal * half_width * 0.62,
+		Color(color.r, color.g, color.b, core_alpha),
+		maxf(2.0, half_width * 0.28),
+		true
+	)
 
-	draw_line(tail, head, Color.WHITE, half_width * 2.65, true)
-	draw_circle(tail, half_width * 1.33, Color.WHITE, true)
-	draw_circle(head, half_width * 1.33, Color.WHITE, true)
+	var cell_spacing: float = maxf(half_width * 1.35, 1.0)
+	var cell_count: int = maxi(4, int(length / cell_spacing))
+	var phase: float = fmod(
+		_idle_time() * (2.2 if active else 1.15),
+		1.0
+	)
 
-	draw_line(tail, head, color, half_width * 2.30, true)
-	draw_circle(tail, half_width * 1.15, color, true)
-	draw_circle(head, half_width * 1.15, color, true)
+	for index in range(cell_count + 1):
+		var cell_t: float = clampf(
+			(float(index) + phase) / float(cell_count),
+			0.0,
+			1.0
+		)
+		var cell_position: Vector2 = tail.lerp(head, cell_t)
+		var cell_color: Color = color.lerp(
+			Color.WHITE,
+			0.28 if index % 2 == 0 else 0.08
+		)
+		cell_color.a = 0.82 if active else 0.54
+		var sides: int = 6 if index % 2 == 0 else 4
+		_draw_regular_polygon(
+			cell_position,
+			half_width * (0.72 if sides == 6 else 0.60),
+			sides,
+			angle + float(index) * 0.34,
+			cell_color,
+			maxf(2.0, half_width * 0.16)
+		)
 
-	draw_line(tail, head, dark, half_width * 1.28, true)
-	draw_circle(tail, half_width * 0.64, dark, true)
-	draw_circle(head, half_width * 0.64, dark, true)
-
-	var dash_spacing: float = half_width * 1.45
-	var dash_count: int = maxi(2, int(length / maxf(dash_spacing, 1.0)))
-	var phase: float = fmod(_idle_time() * (1.8 if active else 0.85), 1.0)
-	for index in range(dash_count):
-		var t: float = fmod((float(index) + phase) / float(dash_count), 1.0)
-		var dash_position: Vector2 = tail.lerp(head, t)
-		var dash_size: float = half_width * (0.22 + 0.05 * sin(float(index)))
-		draw_circle(
-			dash_position,
-			dash_size,
-			Color(color.r, color.g, color.b, 0.42 if active else 0.20),
+	# Parte ja completada vira um feixe branco vivo.
+	if progress > 0.0:
+		var completed_start: Vector2 = head.lerp(tail, progress)
+		draw_line(
+			completed_start,
+			head,
+			Color(1.0, 1.0, 1.0, 0.62),
+			half_width * 0.34,
 			true
 		)
 
-	var head_pulse: float = 0.5 + 0.5 * sin(_idle_time() * 8.0)
-	draw_arc(
-		head,
-		half_width * (0.80 + head_pulse * 0.08),
-		0.0,
-		TAU,
-		42,
-		Color.WHITE,
-		maxf(2.0, half_width * 0.13),
-		true
-	)
-	draw_arc(
-		head,
-		half_width * 0.58,
-		-PI * 0.5,
-		-PI * 0.5 + TAU * progress,
-		36,
-		color,
-		maxf(2.0, half_width * 0.14),
-		true
-	)
-	draw_circle(head, half_width * 0.12, Color.WHITE, true)
+	var pulse: float = 0.5 + 0.5 * sin(_idle_time() * 9.0)
+	var head_size: float = half_width * (1.42 + pulse * 0.16)
 
-	var tail_indicator: Vector2 = tail - direction * half_width * 0.15
-	_draw_diamond(
-		tail_indicator,
-		half_width * 0.42,
+	# Cabeca do hold: portal octogonal com flor de losangos.
+	_draw_regular_polygon(
+		head,
+		head_size * 1.38,
+		8,
+		_idle_time() * 0.85,
+		Color(color.r, color.g, color.b, 0.48),
+		maxf(3.0, half_width * 0.24)
+	)
+	_draw_regular_polygon(
+		head,
+		head_size,
+		6,
+		-_idle_time() * 1.10,
 		Color.WHITE,
-		maxf(2.0, half_width * 0.12)
+		maxf(3.0, half_width * 0.22)
 	)
 
+	for petal in range(4):
+		var petal_angle: float = (
+			PI * 0.25
+			+ TAU * float(petal) / 4.0
+			+ _idle_time() * 0.40
+		)
+		var petal_position: Vector2 = (
+			head
+			+ Vector2(cos(petal_angle), sin(petal_angle))
+			* head_size * 0.72
+		)
+		_draw_rotated_diamond(
+			petal_position,
+			head_size * 0.48,
+			petal_angle,
+			Color(color.r, color.g, color.b, 0.92),
+			maxf(2.0, half_width * 0.15)
+		)
+
+	_draw_rotated_diamond(
+		tail,
+		half_width * 1.08,
+		angle + PI * 0.25,
+		Color(color.r, color.g, color.b, 0.82),
+		maxf(2.0, half_width * 0.18)
+	)
 
 func _draw_slide(event: Dictionary) -> void:
 	if not bool(event.get("_spawned", false)):
@@ -788,53 +959,82 @@ func _draw_tap_prism(
 	life: float,
 	rotation_value: float
 ) -> void:
-	var flash_radius: float = radius * (0.025 + progress * 0.105)
+	# Explosao de TAP maior, mais luminosa e com prisma em camadas.
+	var flash_radius: float = radius * (
+		0.055 + progress * 0.190
+	)
 	draw_circle(
 		position_value,
 		flash_radius,
-		Color(1.0, 1.0, 1.0, life * 0.16),
+		Color(1.0, 1.0, 1.0, life * 0.22),
 		true
 	)
 
-	for layer in range(4):
-		var size: float = radius * (0.055 + float(layer) * 0.022)
-		size *= 0.22 + progress * 1.18
-		var alpha: float = life * (1.0 - float(layer) * 0.17)
-		var layer_color: Color = Color.WHITE.lerp(color, 0.22 + float(layer) * 0.22)
+	for layer in range(5):
+		var size: float = radius * (
+			0.082 + float(layer) * 0.031
+		)
+		size *= 0.34 + progress * 1.34
+		var alpha: float = life * (
+			1.0 - float(layer) * 0.135
+		)
+		var layer_color: Color = Color.WHITE.lerp(
+			color,
+			0.14 + float(layer) * 0.19
+		)
 		layer_color.a = alpha
 		_draw_rotated_diamond(
 			position_value,
 			size,
-			rotation_value + float(layer) * PI * 0.25,
+			rotation_value + float(layer) * PI * 0.20,
 			layer_color,
-			maxf(3.0, radius * (0.010 - float(layer) * 0.0014))
+			maxf(4.0, radius * (0.014 - float(layer) * 0.0015))
 		)
 
-	for index in range(8):
-		var angle: float = rotation_value + TAU * float(index) / 8.0
-		var direction := Vector2(cos(angle), sin(angle))
-		var shard_center: Vector2 = position_value + direction * radius * (0.040 + progress * 0.145)
-		var shard_size: float = radius * (0.016 + progress * 0.020)
+	for index in range(12):
+		var angle: float = (
+			rotation_value
+			+ TAU * float(index) / 12.0
+		)
+		var direction: Vector2 = Vector2(
+			cos(angle),
+			sin(angle)
+		)
+		var shard_center: Vector2 = (
+			position_value
+			+ direction * radius * (0.075 + progress * 0.235)
+		)
+		var shard_size: float = radius * (
+			0.022 + progress * 0.032
+		)
 		_draw_rotated_diamond(
 			shard_center,
 			shard_size,
 			angle,
-			Color(color.r, color.g, color.b, life * 0.76),
-			maxf(2.0, radius * 0.0045)
+			Color(color.r, color.g, color.b, life * 0.88),
+			maxf(2.5, radius * 0.0060)
 		)
 
-	for ring in range(2):
-		draw_arc(
+	for polygon_layer in range(2):
+		_draw_regular_polygon(
 			position_value,
-			radius * (0.045 + float(ring) * 0.035 + progress * 0.12),
-			rotation_value + float(ring) * PI * 0.5,
-			rotation_value + float(ring) * PI * 0.5 + PI * 1.36,
-			38,
-			Color(1.0, 1.0, 1.0, life * (0.48 - float(ring) * 0.14)),
-			maxf(2.0, radius * 0.005),
-			true
+			radius * (
+				0.080
+				+ float(polygon_layer) * 0.065
+				+ progress * 0.185
+			),
+			8 if polygon_layer == 0 else 6,
+			rotation_value * (
+				1.0 if polygon_layer == 0 else -1.0
+			),
+			Color(
+				1.0,
+				1.0,
+				1.0,
+				life * (0.64 - float(polygon_layer) * 0.18)
+			),
+			maxf(3.0, radius * 0.0070)
 		)
-
 
 func _draw_slide_burst(
 	position_value: Vector2,
@@ -844,7 +1044,7 @@ func _draw_slide_burst(
 	rotation_value: float
 ) -> void:
 	for layer in range(4):
-		var size: float = radius * (0.080 + float(layer) * 0.022)
+		var size: float = radius * (0.105 + float(layer) * 0.030)
 		size *= 0.30 + progress * 1.10
 		var points: PackedVector2Array = _star_points(
 			size,
@@ -863,7 +1063,7 @@ func _draw_slide_burst(
 	for index in range(6):
 		var angle: float = rotation_value + TAU * float(index) / 6.0
 		var direction := Vector2(cos(angle), sin(angle))
-		var p: Vector2 = position_value + direction * radius * (0.055 + progress * 0.14)
+		var p: Vector2 = position_value + direction * radius * (0.075 + progress * 0.19)
 		_draw_chevron(
 			p,
 			direction,
@@ -878,31 +1078,62 @@ func _draw_hold_burst(
 	progress: float,
 	life: float
 ) -> void:
-	for ring in range(4):
-		draw_arc(
+	# Final do HOLD: portal cristalino, sem simples aneis redondos.
+	var rotation_value: float = (
+		float(Time.get_ticks_msec()) / 1000.0 * 1.8
+	)
+
+	for layer in range(5):
+		var size: float = radius * (
+			0.075
+			+ float(layer) * 0.044
+			+ progress * 0.185
+		)
+		var sides: int = 8 if layer % 2 == 0 else 6
+		var direction_sign: float = (
+			1.0 if layer % 2 == 0 else -1.0
+		)
+		_draw_regular_polygon(
 			position_value,
-			radius * (0.030 + float(ring) * 0.026 + progress * 0.11),
-			0.0,
-			TAU,
-			56,
-			Color(color.r, color.g, color.b, life * (0.94 - float(ring) * 0.19)),
-			maxf(2.0, radius * (0.010 - float(ring) * 0.0014)),
-			true
+			size,
+			sides,
+			rotation_value * direction_sign + float(layer) * 0.24,
+			Color(
+				color.r,
+				color.g,
+				color.b,
+				life * (0.98 - float(layer) * 0.15)
+			),
+			maxf(3.0, radius * (0.013 - float(layer) * 0.0013))
 		)
 
-	for index in range(4):
-		var angle: float = PI * 0.25 + float(index) * PI * 0.5
-		var direction := Vector2(cos(angle), sin(angle))
-		var inner: Vector2 = position_value + direction * radius * (0.025 + progress * 0.03)
-		var outer: Vector2 = position_value + direction * radius * (0.075 + progress * 0.12)
-		draw_line(
-			inner,
-			outer,
-			Color.WHITE,
-			maxf(2.0, radius * 0.006),
-			true
+	for index in range(8):
+		var angle: float = (
+			rotation_value * 0.55
+			+ TAU * float(index) / 8.0
+		)
+		var direction: Vector2 = Vector2(
+			cos(angle),
+			sin(angle)
+		)
+		var crystal_position: Vector2 = (
+			position_value
+			+ direction * radius * (0.090 + progress * 0.245)
+		)
+		_draw_rotated_diamond(
+			crystal_position,
+			radius * (0.034 + progress * 0.028),
+			angle + PI * 0.25,
+			Color(color.r, color.g, color.b, life * 0.90),
+			maxf(2.5, radius * 0.0065)
 		)
 
+	draw_circle(
+		position_value,
+		radius * (0.038 + progress * 0.045),
+		Color(1.0, 1.0, 1.0, life * 0.74),
+		true
+	)
 
 func _draw_miss_burst(
 	position_value: Vector2,

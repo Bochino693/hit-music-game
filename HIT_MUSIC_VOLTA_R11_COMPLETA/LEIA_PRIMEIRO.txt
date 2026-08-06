@@ -1,0 +1,35 @@
+HIT MUSIC - VOLTAR PARA R11
+
+A pasta beta-12 precisa estar limpa na R8 do GitHub antes de aplicar.
+A R11 depende da R10, e a R10 depende da R9.
+Por isso este pacote executa obrigatoriamente:
+
+1. R9
+2. R10
+3. R11 segura
+
+A R11 segura mantém o visual e os LEDs da R11, mas remove duas chamadas
+super que causavam erro de resolução de classe no Godot 4.6.
+
+USO:
+
+1. Feche o Godot.
+2. Extraia todos os arquivos deste ZIP dentro de:
+   C:\Users\LAZER GAMES\Documents\beta-12
+3. Dê dois cliques em VOLTAR_PARA_R11.bat
+
+Ou no PowerShell:
+
+cd "C:\Users\LAZER GAMES\Documents\beta-12"
+Unblock-File .\VOLTAR_PARA_R11.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\VOLTAR_PARA_R11.ps1
+
+Não use barras antes dos sublinhados.
+
+Depois, compile no Arduino IDE:
+HitMusic_R11_CENARIO_GUIA_FLASH.ino
+
+Placa: Arduino Nano
+Processador: ATmega328P
+Porta: COM5
+Baud: 9600

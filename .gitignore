@@ -23,3 +23,9 @@ medias/rick_morty_oldd.ogv.import
 _backup_hit_music_r7_*/
 
 _backup_hit_music_*/
+
+.godot/
+_backup_hit_music_*/
+_hit_music_backup_*/
+_hit_music_restauracao_atual/
+*.tmp

@@ -25,7 +25,7 @@ static func clear_lane(lane: int) -> void:
 static func hit_lane(
 	lane: int,
 	color: Color,
-	duration_ms: int = 180
+	duration_ms: int = 240
 ) -> void:
 	var rgb: Vector3i = _rgb(color)
 	send_raw(
@@ -35,7 +35,7 @@ static func hit_lane(
 			rgb.x,
 			rgb.y,
 			rgb.z,
-			clampi(duration_ms, 90, 1200),
+			clampi(duration_ms, 90, 1400),
 		]
 	)
 
@@ -50,10 +50,20 @@ static func pulse_lane(lane: int) -> void:
 
 static func menu_state(
 	_index: int = 0,
-	_color: Color = Color.WHITE
+	color: Color = MENU_NEXT_COLOR
 ) -> void:
-	var next_rgb: Vector3i = _rgb(MENU_NEXT_COLOR)
-	var select_rgb: Vector3i = _rgb(MENU_SELECT_COLOR)
+	menu_state_colors(
+		color,
+		MENU_SELECT_COLOR
+	)
+
+
+static func menu_state_colors(
+	next_color: Color,
+	select_color: Color
+) -> void:
+	var next_rgb: Vector3i = _rgb(next_color)
+	var select_rgb: Vector3i = _rgb(select_color)
 	send_raw(
 		"MENU %d %d %d %d %d %d"
 		% [
@@ -68,22 +78,29 @@ static func menu_state(
 
 
 static func menu_next_feedback() -> void:
-	hit_lane(0, MENU_NEXT_COLOR, 140)
+	hit_lane(0, MENU_NEXT_COLOR, 180)
 
 
 static func menu_select_feedback() -> void:
-	hit_lane(1, MENU_SELECT_COLOR, 160)
+	hit_lane(1, MENU_SELECT_COLOR, 210)
 
 
 static func scene_state(
 	primary: Color,
 	secondary: Color
 ) -> void:
-	var a: Vector3i = _rgb(primary)
-	var b: Vector3i = _rgb(secondary)
+	var first_rgb: Vector3i = _rgb(primary)
+	var second_rgb: Vector3i = _rgb(secondary)
 	send_raw(
 		"SCENE2 %d %d %d %d %d %d"
-		% [a.x, a.y, a.z, b.x, b.y, b.z]
+		% [
+			first_rgb.x,
+			first_rgb.y,
+			first_rgb.z,
+			second_rgb.x,
+			second_rgb.y,
+			second_rgb.z,
+		]
 	)
 
 
@@ -100,8 +117,8 @@ static func ready() -> void:
 
 
 static func send_raw(command: String) -> void:
-	var clean: String = command.strip_edges()
-	if clean.is_empty():
+	var clean_command: String = command.strip_edges()
+	if clean_command.is_empty():
 		return
 
 	var base_dir: String = ProjectSettings.globalize_path(
@@ -111,36 +128,42 @@ static func send_raw(command: String) -> void:
 	DirAccess.make_dir_recursive_absolute(spool_dir)
 
 	_command_sequence += 1
-	var name: String = "cmd_%020d_%06d_%d.cmd" % [
-		Time.get_ticks_usec(),
-		_command_sequence,
-		OS.get_process_id(),
-	]
-	var final_path: String = spool_dir.path_join(name)
+	var file_name: String = (
+		"cmd_%020d_%06d_%d.cmd"
+		% [
+			Time.get_ticks_usec(),
+			_command_sequence,
+			OS.get_process_id(),
+		]
+	)
+	var final_path: String = spool_dir.path_join(file_name)
 	var temporary_path: String = final_path + ".tmp"
-	var file := FileAccess.open(
+	var file: FileAccess = FileAccess.open(
 		temporary_path,
 		FileAccess.WRITE
 	)
 	if file == null:
+		push_warning(
+			"Falha ao escrever comando LED: "
+			+ clean_command
+		)
 		return
 
-	file.store_string(clean + "\n")
+	file.store_string(clean_command + "\n")
 	file.flush()
 	file.close()
 
-	if FileAccess.file_exists(final_path):
-		DirAccess.remove_absolute(final_path)
-
-	var error: Error = DirAccess.rename_absolute(
+	var rename_error: Error = DirAccess.rename_absolute(
 		temporary_path,
 		final_path
 	)
-	if (
-		error != OK
-		and FileAccess.file_exists(temporary_path)
-	):
-		DirAccess.remove_absolute(temporary_path)
+	if rename_error != OK:
+		if FileAccess.file_exists(temporary_path):
+			DirAccess.remove_absolute(temporary_path)
+		push_warning(
+			"Falha ao publicar comando LED: "
+			+ clean_command
+		)
 
 
 static func _rgb(color: Color) -> Vector3i:
