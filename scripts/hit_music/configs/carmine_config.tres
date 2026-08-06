@@ -1,0 +1,24 @@
+[gd_resource type="Resource" load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/hit_music/configs/hit_music_song_config.gd" id="1"]
+[ext_resource type="Resource" path="res://scripts/hit_music/configs/carmine_facil.tres" id="2"]
+[ext_resource type="Resource" path="res://scripts/hit_music/configs/carmine_dificil.tres" id="3"]
+
+[resource]
+script = ExtResource("1")
+id = "carmine"
+nome = "CARMINE - ONE PIECE"
+artista = "HIT MUSIC"
+musica_path = "res://songs/carmine.mp3"
+imagem_capa_path = "res://images/carmine.jpeg"
+video_contagem_path = "res://medias/carmine.ogv"
+video_fundo_path = "res://medias/carmine.ogv"
+video_preview_path = "res://medias/carmine.ogv"
+cor_primaria = Color(0.96, 0.025, 0.075, 1)
+cor_secundaria = Color(1, 0.98, 0.98, 1)
+cor_slide = Color(0.02, 0.94, 1, 1)
+cor_hold = Color(1, 0.84, 0.05, 1)
+padrao_fundo_principal = "LOSANGOS"
+padrao_fundo_secundario = "HEXAGONOS"
+facil = ExtResource("2")
+dificil = ExtResource("3")

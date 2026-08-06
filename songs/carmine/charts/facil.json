@@ -1,0 +1,25 @@
+{
+  "song": "carmine",
+  "difficulty": "easy",
+  "bpm": 174.0,
+  "offset": 0.0,
+  "events": [
+    { "type": "tap", "time": 2.0, "lane": 0 },
+    { "type": "tap", "time": 3.0, "lane": 2 },
+    { "type": "tap", "time": 4.0, "lane": 4 },
+    { "type": "tap", "time": 5.0, "lane": 6 },
+    { "type": "hold", "time": 6.2, "end_time": 7.8, "lane": 1 },
+    {
+      "type": "slide",
+      "time": 9.0,
+      "end_time": 10.6,
+      "start_lane": 7,
+      "end_lane": 3,
+      "path": [
+        [-0.62, -0.42],
+        [-0.18, -0.08],
+        [0.58, 0.40]
+      ]
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+[gd_scene format=3 uid="uid://b8vq1an4m3fat"]
+
+[ext_resource type="Texture2D" uid="uid://dl6qm0j063rpp" path="res://images/tazos_idle_sheet_3x1_160.png" id="1_aw2e6"]
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_ggmsl"]
+atlas = ExtResource("1_aw2e6")
+region = Rect2(0, 0, 160, 160)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_glwu1"]
+atlas = ExtResource("1_aw2e6")
+region = Rect2(160, 0, 160, 160)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_mmj0v"]
+atlas = ExtResource("1_aw2e6")
+region = Rect2(320, 0, 160, 160)
+
+[sub_resource type="SpriteFrames" id="SpriteFrames_5r06m"]
+animations = [{
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_ggmsl")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_glwu1")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_mmj0v")
+}],
+"loop": true,
+"name": &"idle",
+"speed": 5.0
+}]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_dqbjh"]
+
+[node name="Tazo" type="Area2D" unique_id=96615386]
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=1133666939]
+sprite_frames = SubResource("SpriteFrames_5r06m")
+animation = &"idle"
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=1914502186]
+shape = SubResource("CircleShape2D_dqbjh")

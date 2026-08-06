@@ -1,0 +1,55 @@
+[gd_scene load_steps=11 format=3]
+
+[ext_resource type="Script" path="res://scripts/hit_music/core/hit_music_game.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/hit_music/playfield/background_theme_renderer.gd" id="2"]
+[ext_resource type="Script" path="res://scripts/hit_music/playfield/lane_ring_renderer.gd" id="3"]
+[ext_resource type="Script" path="res://scripts/hit_music/core/note_manager.gd" id="4"]
+[ext_resource type="Script" path="res://scripts/hit_music/effects/hit_effect_manager.gd" id="5"]
+[ext_resource type="Script" path="res://scripts/hit_music/core/song_clock.gd" id="6"]
+[ext_resource type="Script" path="res://scripts/hit_music/core/chart_player.gd" id="7"]
+[ext_resource type="Script" path="res://scripts/hit_music/core/judgement_system.gd" id="8"]
+[ext_resource type="Script" path="res://scripts/hit_music/core/input_router.gd" id="9"]
+
+[node name="HitMusicGame" type="Node2D"]
+script = ExtResource("1")
+
+[node name="Background" type="Node2D" parent="."]
+
+[node name="VideoBackground" type="VideoStreamPlayer" parent="Background"]
+expand = true
+loop = true
+
+[node name="ThemeRenderer" type="Node2D" parent="Background"]
+script = ExtResource("2")
+
+[node name="Playfield" type="Node2D" parent="."]
+
+[node name="RingRenderer" type="Node2D" parent="Playfield"]
+z_index = 10
+script = ExtResource("3")
+
+[node name="Notes" type="Node2D" parent="Playfield"]
+z_index = 20
+script = ExtResource("4")
+
+[node name="Effects" type="Node2D" parent="Playfield"]
+z_index = 30
+script = ExtResource("5")
+
+[node name="Managers" type="Node" parent="."]
+
+[node name="SongClock" type="Node" parent="Managers"]
+script = ExtResource("6")
+
+[node name="ChartPlayer" type="Node" parent="Managers"]
+script = ExtResource("7")
+
+[node name="JudgementSystem" type="Node" parent="Managers"]
+script = ExtResource("8")
+
+[node name="InputRouter" type="Node" parent="Managers"]
+script = ExtResource("9")
+
+[node name="Audio" type="Node" parent="."]
+
+[node name="MusicPlayer" type="AudioStreamPlayer" parent="Audio"]

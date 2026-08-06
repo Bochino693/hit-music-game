@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://b4ykbqx8ratea"]
+
+[ext_resource type="Script" uid="uid://cpfv0v17wgpuu" path="res://scripts/rick_morty.gd" id="1_sg5ay"]
+
+[node name="RickMorty" type="Node2D" unique_id=1864260130]
+script = ExtResource("1_sg5ay")

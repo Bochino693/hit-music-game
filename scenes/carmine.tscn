@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://co01p80fjy4b2"]
+
+[ext_resource type="Script" uid="uid://6wl36wcb6f2f" path="res://scripts/carmine.gd" id="1_nwgy6"]
+
+[node name="Carmine" type="Node2D" unique_id=3445515]
+script = ExtResource("1_nwgy6")

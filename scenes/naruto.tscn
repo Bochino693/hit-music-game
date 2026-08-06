@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bpackluoqve86"]
+
+[ext_resource type="Script" uid="uid://dam6k5wqklita" path="res://scripts/naruto.gd" id="1_q5imy"]
+
+[node name="Naruto" type="Node2D" unique_id=257155778]
+script = ExtResource("1_q5imy")

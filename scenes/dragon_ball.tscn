@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://ds47mt6lnr8ag"]
+
+[ext_resource type="Script" uid="uid://c7xq8reg7vuwp" path="res://scripts/dragon_ball.gd" id="1_a3qj5"]
+
+[node name="DragonBall" type="Node2D" unique_id=927595046]
+script = ExtResource("1_a3qj5")

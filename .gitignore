@@ -1,0 +1,22 @@
+# Godot
+.godot/
+.import/
+export/
+build/
+.android/
+
+# Arquivos temporarios
+*.tmp
+*.log
+*.bak
+*~
+
+# Editor
+.vscode/
+.idea/
+
+# Backups locais
+_backup_hit_music_r5_*/
+
+medias/rick_morty_oldd.ogv
+medias/rick_morty_oldd.ogv.import

@@ -1,0 +1,22 @@
+[gd_resource type="Resource" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/hit_music/configs/hit_music_difficulty_config.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+nome = "DIFICIL"
+chart_path = "res://songs/carmine/charts/dificil.json"
+tempo_aproximacao = 0.88
+janela_acerto = 0.16
+janela_perfeito = 0.07
+max_notas_simultaneas = 2
+escala_tap = 0.94
+escala_estrela = 1.0
+largura_hold = 0.94
+velocidade_slide = 1.18
+intensidade_fundo = 0.22
+velocidade_fundo = 0.72
+permitir_slides_cruzados = true
+permitir_slides_curvos = true
+permitir_duplas = true
+permitir_hold_com_slide = true
