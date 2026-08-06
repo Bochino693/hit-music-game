@@ -115,6 +115,7 @@ func _ready() -> void:
 	_load_assets()
 	_prepare_chart()
 	_update_hud()
+	_set_gameplay_hud_visible(true)
 	get_viewport().size_changed.connect(_on_viewport_size_changed)
 	LED_CLIENT.clear_all()
 
@@ -197,9 +198,13 @@ func _calculate_geometry() -> void:
 			_center + Vector2(cos(angle), sin(angle)) * _radius * 0.905
 		)
 
+	var top_margin: float = screen.x * TOP_MARGIN_RATIO
 	_video_rect = Rect2(
-		_center - Vector2(_radius * 0.75, _radius * 0.29),
-		Vector2(_radius * 1.50, _radius * 0.58)
+		Vector2(top_margin, top_margin),
+		Vector2(
+			screen.x - top_margin * 2.0,
+			screen.y * TOP_HEIGHT_RATIO
+		)
 	)
 
 
@@ -217,6 +222,8 @@ func _build_scene() -> void:
 	_video_player.loop = true
 	_video_player.volume_db = -80.0
 	_video_player.z_index = 2
+	_video_player.visible = false
+	_video_player.material = _rounded_video_material()
 	add_child(_video_player)
 
 	_cover = TextureRect.new()
@@ -312,12 +319,16 @@ func _build_hud() -> void:
 	_progress_bar.add_theme_stylebox_override("fill", _progress_fill_style())
 	_top_panel.add_child(_progress_bar)
 
-	_countdown_label = _make_label("", int(_radius * 0.32), HORIZONTAL_ALIGNMENT_CENTER, font)
-	_countdown_label.position = _center - Vector2(_radius * 0.45, _radius * 0.25)
-	_countdown_label.size = Vector2(_radius * 0.90, _radius * 0.50)
+	_countdown_label = _make_label("", int(height * 0.56), HORIZONTAL_ALIGNMENT_CENTER, font)
+	_countdown_label.position = _top_panel.position
+	_countdown_label.size = _top_panel.size
 	_countdown_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_countdown_label.add_theme_color_override("font_color", Color.WHITE)
-	_countdown_label.add_theme_constant_override("outline_size", 10)
+	_countdown_label.add_theme_color_override(
+		"font_outline_color",
+		Color(0.0, 0.0, 0.0, 0.98)
+	)
+	_countdown_label.add_theme_constant_override("outline_size", 12)
 	_countdown_label.visible = false
 	_hud_layer.add_child(_countdown_label)
 
@@ -361,6 +372,10 @@ func _load_assets() -> void:
 		var video_resource: Resource = load(video_path)
 		if video_resource is VideoStream:
 			_video_player.stream = video_resource as VideoStream
+		else:
+			push_warning("Arquivo nao e VideoStream: " + video_path)
+	else:
+		push_warning("Video nao encontrado: " + video_path)
 
 	var cover_path: String = str(_song.get("cover", ""))
 	if ResourceLoader.exists(cover_path):
@@ -398,8 +413,11 @@ func _start_countdown() -> void:
 	_video_player.visible = true
 	if _video_player.stream != null:
 		_video_player.play()
+	else:
+		push_warning("Video da musica nao foi carregado: " + str(_song.get("video", "")))
 	if _music_player.stream != null:
 		_music_player.play()
+	_set_gameplay_hud_visible(false)
 	_countdown_label.visible = true
 	_countdown_label.text = "3"
 
@@ -408,6 +426,47 @@ func _start_playing() -> void:
 	_state = GameState.PLAYING
 	_state_time = 0.0
 	_countdown_label.visible = false
+	_set_gameplay_hud_visible(true)
+
+
+func _set_gameplay_hud_visible(value: bool) -> void:
+	for control in [
+		_label_title,
+		_label_difficulty,
+		_label_score,
+		_label_combo,
+		_label_performance,
+		_label_time,
+		_progress_bar,
+	]:
+		if control != null and is_instance_valid(control):
+			control.visible = value
+
+
+func _rounded_video_material() -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = """
+shader_type canvas_item;
+
+uniform float corner_radius : hint_range(0.01, 0.30) = 0.085;
+uniform float feather : hint_range(0.0005, 0.03) = 0.004;
+
+float rounded_rect_mask(vec2 uv, float radius_value) {
+	vec2 half_size = vec2(0.5);
+	vec2 q = abs(uv - vec2(0.5)) - (half_size - vec2(radius_value));
+	float distance_value = length(max(q, vec2(0.0))) - radius_value;
+	return 1.0 - smoothstep(-feather, feather, distance_value);
+}
+
+void fragment() {
+	vec4 source_color = texture(TEXTURE, UV);
+	float mask_value = rounded_rect_mask(UV, corner_radius);
+	COLOR = vec4(source_color.rgb, source_color.a * mask_value);
+}
+"""
+	var material := ShaderMaterial.new()
+	material.shader = shader
+	return material
 
 
 func _update_song_time() -> void:
@@ -841,7 +900,9 @@ func _finish_game(failed: bool) -> void:
 	_failed = failed
 	_music_player.stop()
 	_video_player.stop()
+	_video_player.visible = false
 	_countdown_label.visible = false
+	_set_gameplay_hud_visible(false)
 	_result_panel.visible = true
 
 	var score: float = _score_percent()
@@ -918,6 +979,9 @@ func _on_viewport_size_changed() -> void:
 	if _video_player != null:
 		_video_player.position = _video_rect.position
 		_video_player.size = _video_rect.size
+	if _countdown_label != null and _top_panel != null:
+		_countdown_label.position = _top_panel.position
+		_countdown_label.size = _top_panel.size
 	if _cover != null:
 		_cover.position = _center - Vector2(_radius * 0.72, _radius * 0.58)
 		_cover.size = Vector2(_radius * 1.44, _radius * 1.16)
@@ -1021,7 +1085,7 @@ func _make_label(
 
 func _top_panel_style() -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.005, 0.010, 0.024, 0.96)
+	style.bg_color = Color(0.005, 0.010, 0.024, 0.40)
 	style.border_color = Color(
 		_primary_color().r,
 		_primary_color().g,
@@ -1029,14 +1093,14 @@ func _top_panel_style() -> StyleBoxFlat:
 		0.72
 	)
 	style.set_border_width_all(3)
-	style.set_corner_radius_all(18)
+	style.set_corner_radius_all(26)
 	style.shadow_color = Color(
 		_primary_color().r,
 		_primary_color().g,
 		_primary_color().b,
 		0.18
 	)
-	style.shadow_size = 12
+	style.shadow_size = 16
 	return style
 
 

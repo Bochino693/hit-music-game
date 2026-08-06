@@ -101,7 +101,6 @@ func _draw() -> void:
 
 	_draw_circle_base()
 	_draw_theme_geometry()
-	_draw_video_frame()
 	_draw_inner_technical_rings()
 	_draw_ring()
 	_draw_lane_energy()
@@ -163,23 +162,39 @@ func _beat_pulse() -> float:
 
 func _draw_circle_base() -> void:
 	var pulse: float = _beat_pulse()
-	draw_circle(center, radius * 0.996, Color(0.002, 0.004, 0.012, 1.0), true)
+	var base_alpha: float = 0.50 if game_state == "selector" else 1.0
+	draw_circle(
+		center,
+		radius * 0.995,
+		Color(0.002, 0.004, 0.012, base_alpha),
+		true
+	)
 	draw_circle(
 		center,
 		radius * (0.86 + pulse * 0.012),
-		Color(_primary().r, _primary().g, _primary().b, 0.025 + pulse * 0.018),
+		Color(_primary().r, _primary().g, _primary().b, 0.022 + pulse * 0.018),
 		true
 	)
 
 
 func _draw_theme_geometry() -> void:
-	var pattern: String = str(song.get("pattern", "diamonds")).to_lower()
+	var configured_pattern: String = str(song.get("pattern", "diamonds")).to_lower()
 	var intensity: float = clampf(float(difficulty.get("background_intensity", 0.18)), 0.04, 0.38)
 	var time_value: float = _idle_time()
 	var speed: float = float(difficulty.get("background_speed", 0.22))
 	var rotation: float = time_value * speed
 	var beat: float = _beat_pulse()
-	var section: int = int(floor(time_value / 12.0)) % 4
+	var section: int = int(floor(time_value / 10.0)) % 4
+	var pattern: String = configured_pattern
+
+	match section:
+		1:
+			pattern = "radial"
+		2:
+			pattern = "diamonds"
+		3:
+			pattern = "hex" if configured_pattern != "hex" else "grid"
+
 	var primary: Color = _primary()
 	var secondary: Color = _secondary()
 	var accent: Color = _accent()
@@ -318,50 +333,6 @@ func _draw_orbit_nodes(rotation: float, intensity: float, color: Color) -> void:
 		)
 
 
-func _draw_video_frame() -> void:
-	var rect := Rect2(
-		center - Vector2(radius * 0.755, radius * 0.295),
-		Vector2(radius * 1.51, radius * 0.59)
-	)
-	var primary: Color = _primary()
-	var beat: float = _beat_pulse()
-
-	_video_style.border_color = Color(
-		primary.r,
-		primary.g,
-		primary.b,
-		0.44 + beat * 0.18
-	)
-	_video_style.shadow_color = Color(
-		primary.r,
-		primary.g,
-		primary.b,
-		0.13 + beat * 0.08
-	)
-	_video_style.shadow_size = int(maxf(8.0, radius * (0.018 + beat * 0.008)))
-	draw_style_box(_video_style, rect.grow(radius * 0.012))
-	draw_style_box(_video_inner_style, rect.grow(-radius * 0.009))
-
-	var top_left: Vector2 = rect.position
-	var top_right: Vector2 = rect.position + Vector2(rect.size.x, 0.0)
-	draw_line(
-		top_left + Vector2(radius * 0.05, 0.0),
-		top_right - Vector2(radius * 0.05, 0.0),
-		Color.WHITE,
-		maxf(1.0, radius * 0.002),
-		true
-	)
-
-	for index in range(4):
-		var x: float = rect.position.x + rect.size.x * (0.16 + float(index) * 0.22)
-		draw_circle(
-			Vector2(x, rect.position.y + radius * 0.015),
-			maxf(1.5, radius * 0.004),
-			Color(primary.r, primary.g, primary.b, 0.46),
-			true
-		)
-
-
 func _draw_inner_technical_rings() -> void:
 	var time_value: float = _idle_time()
 	var primary: Color = _primary()
@@ -388,19 +359,19 @@ func _draw_inner_technical_rings() -> void:
 
 func _draw_ring() -> void:
 	var ring_radius: float = radius * 0.905
-	var width: float = maxf(3.5, radius * 0.0070)
-	var marker_radius: float = maxf(7.0, radius * 0.022)
+	var width: float = maxf(4.0, radius * 0.0072)
+	var marker_radius: float = maxf(6.0, radius * 0.0195)
 	var pulse: float = _beat_pulse()
 	var primary: Color = _primary()
 
 	draw_arc(
 		center,
-		ring_radius + radius * 0.006,
+		ring_radius + radius * 0.004,
 		0.0,
 		TAU,
-		288,
-		Color(primary.r, primary.g, primary.b, 0.12 + pulse * 0.08),
-		width * 4.5,
+		320,
+		Color(primary.r, primary.g, primary.b, 0.10 + pulse * 0.05),
+		width * 3.4,
 		true
 	)
 	draw_arc(
@@ -408,37 +379,21 @@ func _draw_ring() -> void:
 		ring_radius,
 		0.0,
 		TAU,
-		288,
+		320,
 		Color.WHITE,
 		width,
-		true
-	)
-	draw_arc(
-		center,
-		ring_radius - width * 1.5,
-		0.0,
-		TAU,
-		288,
-		Color(primary.r, primary.g, primary.b, 0.46),
-		maxf(1.2, width * 0.24),
 		true
 	)
 
 	for position_value in lane_positions:
 		draw_circle(
 			position_value,
-			marker_radius * 2.15,
-			Color(primary.r, primary.g, primary.b, 0.08),
-			true
-		)
-		draw_circle(
-			position_value,
-			marker_radius * 1.48,
-			Color(1.0, 1.0, 1.0, 0.10),
+			marker_radius * 1.75,
+			Color(1.0, 1.0, 1.0, 0.08),
 			true
 		)
 		draw_circle(position_value, marker_radius, Color.WHITE, true)
-		draw_circle(position_value, marker_radius * 0.28, _dark(), true)
+
 
 
 func _draw_lane_energy() -> void:
@@ -510,10 +465,10 @@ func _draw_hold(event: Dictionary) -> void:
 		head = target
 
 	var remaining: float = 1.0 - hold_progress
-	var length: float = radius * (0.46 if song_time < hit_time else maxf(0.072, 0.46 * remaining))
+	var length: float = radius * (0.52 if song_time < hit_time else maxf(0.085, 0.52 * remaining))
 	var tail: Vector2 = head - direction * length
-	var width: float = radius * 0.058 * float(difficulty.get("hold_width", 1.0))
-	var color: Color = _accent()
+	var width: float = radius * 0.071 * float(difficulty.get("hold_width", 1.0))
+	var color: Color = Color(1.0, 0.83, 0.08, 1.0)
 	var holding: bool = bool(event.get("_holding", false))
 	if holding:
 		color = color.lerp(Color.WHITE, 0.16)
@@ -614,8 +569,8 @@ func _draw_slide(event: Dictionary) -> void:
 	if song_time < hit_time - approach or song_time > end_time + 0.35:
 		return
 
-	var color: Color = _primary()
-	var accent: Color = _accent()
+	var color: Color = Color(0.04, 0.93, 1.0, 1.0)
+	var accent: Color = Color(0.82, 1.0, 1.0, 1.0)
 	var visual_progress: float = clampf(float(event.get("_visual_progress", 0.0)), 0.0, 1.0)
 	var active: bool = bool(event.get("_active", false))
 	var arrows_from: float = visual_progress if active else 0.0
@@ -657,7 +612,7 @@ func _draw_slide(event: Dictionary) -> void:
 	_draw_star(
 		star_position,
 		tangent.angle(),
-		radius * 0.088 * float(difficulty.get("star_scale", 1.0)),
+		radius * 0.105 * float(difficulty.get("star_scale", 1.0)),
 		color,
 		accent
 	)
@@ -687,7 +642,7 @@ func _draw_chevrons(
 	color: Color,
 	accent: Color
 ) -> void:
-	var spacing: float = radius * 0.047
+	var spacing: float = radius * 0.052
 	var estimated_length: float = 0.0
 	for index in range(points.size() - 1):
 		estimated_length += points[index].distance_to(points[index + 1])
@@ -701,7 +656,7 @@ func _draw_chevrons(
 		var tangent: Vector2 = PATH_BUILDER.tangent_at(points, progress)
 		var mix_value: float = 0.10 + 0.18 * float(index % 3)
 		var arrow_color: Color = color.lerp(accent, mix_value)
-		_draw_chevron(position_value, tangent, radius * 0.046, arrow_color)
+		_draw_chevron(position_value, tangent, radius * 0.058, arrow_color)
 
 
 func _draw_chevron(
@@ -712,61 +667,51 @@ func _draw_chevron(
 ) -> void:
 	var tangent: Vector2 = direction.normalized()
 	var perpendicular := Vector2(-tangent.y, tangent.x)
-	var length: float = size * 2.05
-	var width: float = size * 1.02
-	var tip: Vector2 = position_value + tangent * length * 0.58
-	var back: Vector2 = position_value - tangent * length * 0.42
-	var notch: Vector2 = position_value - tangent * length * 0.02
+	var length: float = size * 2.10
+	var half_height: float = size * 0.88
+
+	var tip: Vector2 = position_value + tangent * length * 0.62
+	var rear: Vector2 = position_value - tangent * length * 0.48
+	var inner: Vector2 = position_value - tangent * length * 0.02
 
 	var polygon := PackedVector2Array([
-		back + perpendicular * width,
-		notch + perpendicular * width * 0.47,
+		rear + perpendicular * half_height,
+		inner + perpendicular * half_height * 0.42,
 		tip,
-		notch - perpendicular * width * 0.47,
-		back - perpendicular * width,
-		back - tangent * length * 0.14,
-		position_value - tangent * length * 0.02,
-		back - tangent * length * 0.14,
+		inner - perpendicular * half_height * 0.42,
+		rear - perpendicular * half_height,
+		position_value - tangent * length * 0.20,
 	])
 
+	var shadow_offset := Vector2(radius * 0.009, radius * 0.010)
 	var shadow := PackedVector2Array()
-	var shadow_offset := Vector2(radius * 0.008, radius * 0.009)
 	for point in polygon:
 		shadow.append(point + shadow_offset)
 
-	draw_colored_polygon(shadow, Color(0.0, 0.0, 0.0, 0.92))
-	draw_polyline(
-		PackedVector2Array([
-			shadow[0],
-			shadow[1],
-			shadow[2],
-			shadow[3],
-			shadow[4],
-		]),
-		Color(0.0, 0.0, 0.0, 0.98),
-		maxf(4.0, size * 0.20),
-		true
-	)
+	draw_colored_polygon(shadow, Color(0.0, 0.0, 0.0, 0.96))
 	draw_colored_polygon(polygon, color)
+
+	var outline := polygon.duplicate()
+	outline.append(outline[0])
 	draw_polyline(
-		PackedVector2Array([
-			polygon[0],
-			polygon[1],
-			polygon[2],
-			polygon[3],
-			polygon[4],
-		]),
-		Color(0.86, 1.0, 1.0, 0.96),
-		maxf(2.0, size * 0.10),
+		outline,
+		Color(0.01, 0.04, 0.07, 0.98),
+		maxf(5.0, size * 0.19),
 		true
 	)
-	draw_line(
-		back,
-		tip - tangent * length * 0.18,
-		Color.WHITE,
-		maxf(1.2, size * 0.055),
+
+	var highlight := PackedVector2Array([
+		rear + perpendicular * half_height * 0.58,
+		inner + perpendicular * half_height * 0.22,
+		tip - tangent * length * 0.10,
+	])
+	draw_polyline(
+		highlight,
+		Color(0.90, 1.0, 1.0, 0.98),
+		maxf(2.0, size * 0.075),
 		true
 	)
+
 
 
 func _draw_star(

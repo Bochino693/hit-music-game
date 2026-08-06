@@ -11,7 +11,7 @@ const SIDE_MARGIN_RATIO: float = 0.015
 const BOTTOM_MARGIN_RATIO: float = 0.012
 const CIRCLE_SCALE: float = 0.985
 const PREVIEW_DELAY: float = 0.75
-const PREVIEW_ALPHA: float = 0.48
+const PREVIEW_ALPHA: float = 0.62
 const CARD_SPACING_RATIO: float = 0.205
 
 var _songs: Array = []
@@ -230,8 +230,8 @@ func _calculate_geometry() -> void:
 		)
 
 	_video_rect = Rect2(
-		_center - Vector2(_radius * 0.755, _radius * 0.295),
-		Vector2(_radius * 1.51, _radius * 0.59)
+		_center - Vector2.ONE * _radius,
+		Vector2.ONE * (_radius * 2.0)
 	)
 
 
@@ -244,6 +244,7 @@ func _build_scene() -> void:
 	_video.volume_db = -80.0
 	_video.modulate.a = 0.0
 	_video.z_index = 2
+	_video.material = _circular_video_material()
 	add_child(_video)
 
 	_renderer = RENDERER_SCRIPT.new()
@@ -716,6 +717,23 @@ func _reload_after_resize() -> void:
 
 func _action_pressed(action: String) -> bool:
 	return InputMap.has_action(action) and Input.is_action_just_pressed(action)
+
+
+func _circular_video_material() -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = """
+shader_type canvas_item;
+
+void fragment() {
+	vec4 source_color = texture(TEXTURE, UV);
+	float distance_value = distance(UV, vec2(0.5));
+	float mask_value = 1.0 - smoothstep(0.488, 0.500, distance_value);
+	COLOR = vec4(source_color.rgb, source_color.a * mask_value);
+}
+"""
+	var material := ShaderMaterial.new()
+	material.shader = shader
+	return material
 
 
 func _load_font() -> Font:
