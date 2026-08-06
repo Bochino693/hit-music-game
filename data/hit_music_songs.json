@@ -1,0 +1,999 @@
+{
+  "songs": [
+    {
+      "id": "carmine",
+      "title": "CARMINE - ONE PIECE",
+      "scene": "res://scenes/carmine.tscn",
+      "audio": "res://songs/carmine.mp3",
+      "video": "res://medias/carmine.ogv",
+      "cover": "res://images/carmine.jpg",
+      "bpm": 174.0,
+      "chart_start": 4.2,
+      "seed": 1101,
+      "pattern": "diamonds",
+      "colors": {
+        "primary": "#F40730",
+        "secondary": "#FFFFFF",
+        "accent": "#FFD21A",
+        "dark": "#090208"
+      },
+      "lane_pattern_easy": [
+        0,
+        2,
+        4,
+        6,
+        1,
+        3,
+        5,
+        7,
+        2,
+        6,
+        0,
+        4
+      ],
+      "lane_pattern_hard": [
+        0,
+        4,
+        1,
+        5,
+        2,
+        6,
+        3,
+        7,
+        0,
+        3,
+        6,
+        1,
+        4,
+        7,
+        2,
+        5
+      ],
+      "slides_easy": [
+        {
+          "path": [
+            7,
+            3
+          ],
+          "shape": "straight"
+        },
+        {
+          "path": [
+            1,
+            5
+          ],
+          "shape": "arc_cw",
+          "curve": 0.52
+        },
+        {
+          "path": [
+            0,
+            4
+          ],
+          "shape": "cross"
+        }
+      ],
+      "slides_hard": [
+        {
+          "path": [
+            7,
+            2,
+            5
+          ],
+          "shape": "zigzag"
+        },
+        {
+          "path": [
+            1,
+            6
+          ],
+          "shape": "cross"
+        },
+        {
+          "path": [
+            0,
+            3
+          ],
+          "shape": "arc_ccw",
+          "curve": 0.72
+        },
+        {
+          "path": [
+            4,
+            7,
+            2
+          ],
+          "shape": "zigzag"
+        }
+      ],
+      "easy": {
+        "approach": 1.12,
+        "hit_window": 0.24,
+        "perfect_window": 0.09,
+        "step_beats": 2.0,
+        "slide_every": 9,
+        "hold_every": 13,
+        "double_every": 0,
+        "slide_beats": 4.0,
+        "hold_beats": 4.0,
+        "tap_scale": 1.08,
+        "star_scale": 1.08,
+        "hold_width": 1.1,
+        "background_intensity": 0.13,
+        "background_speed": 0.13,
+        "jitter": 0.02
+      },
+      "hard": {
+        "approach": 0.86,
+        "hit_window": 0.16,
+        "perfect_window": 0.065,
+        "step_beats": 1.0,
+        "slide_every": 7,
+        "hold_every": 11,
+        "double_every": 6,
+        "double_distance": 4,
+        "slide_beats": 3.0,
+        "hold_beats": 3.0,
+        "tap_scale": 0.98,
+        "star_scale": 1.0,
+        "hold_width": 0.96,
+        "background_intensity": 0.22,
+        "background_speed": 0.28,
+        "jitter": 0.03
+      }
+    },
+    {
+      "id": "dragon_ball",
+      "title": "DRAGON BALL",
+      "scene": "res://scenes/dragon_ball.tscn",
+      "audio": "res://songs/dragon-ball.mp3",
+      "video": "res://medias/dragon-ball.ogv",
+      "cover": "res://images/dragon-ball.jpeg",
+      "bpm": 140.0,
+      "chart_start": 4.0,
+      "seed": 2202,
+      "pattern": "radial",
+      "colors": {
+        "primary": "#FF6A00",
+        "secondary": "#26A7FF",
+        "accent": "#FFE21A",
+        "dark": "#05080F"
+      },
+      "lane_pattern_easy": [
+        0,
+        4,
+        2,
+        6,
+        1,
+        5,
+        3,
+        7,
+        0,
+        2,
+        4,
+        6
+      ],
+      "lane_pattern_hard": [
+        0,
+        4,
+        7,
+        3,
+        1,
+        5,
+        2,
+        6,
+        0,
+        5,
+        1,
+        6,
+        2,
+        7,
+        3,
+        4
+      ],
+      "slides_easy": [
+        {
+          "path": [
+            0,
+            4
+          ],
+          "shape": "cross"
+        },
+        {
+          "path": [
+            2,
+            6
+          ],
+          "shape": "arc_cw",
+          "curve": 0.6
+        },
+        {
+          "path": [
+            7,
+            3
+          ],
+          "shape": "straight"
+        }
+      ],
+      "slides_hard": [
+        {
+          "path": [
+            0,
+            5
+          ],
+          "shape": "hook",
+          "curve": 0.8
+        },
+        {
+          "path": [
+            7,
+            2,
+            5
+          ],
+          "shape": "zigzag"
+        },
+        {
+          "path": [
+            1,
+            6
+          ],
+          "shape": "cross"
+        },
+        {
+          "path": [
+            3,
+            0
+          ],
+          "shape": "arc_ccw",
+          "curve": 0.8
+        }
+      ],
+      "easy": {
+        "approach": 1.15,
+        "hit_window": 0.24,
+        "perfect_window": 0.09,
+        "step_beats": 2.0,
+        "slide_every": 8,
+        "hold_every": 14,
+        "double_every": 0,
+        "slide_beats": 4.0,
+        "hold_beats": 4.0,
+        "tap_scale": 1.1,
+        "star_scale": 1.1,
+        "hold_width": 1.08,
+        "background_intensity": 0.15,
+        "background_speed": 0.24,
+        "jitter": 0.01
+      },
+      "hard": {
+        "approach": 0.82,
+        "hit_window": 0.16,
+        "perfect_window": 0.06,
+        "step_beats": 0.75,
+        "slide_every": 7,
+        "hold_every": 12,
+        "double_every": 5,
+        "double_distance": 4,
+        "slide_beats": 3.0,
+        "hold_beats": 3.0,
+        "tap_scale": 0.96,
+        "star_scale": 1.02,
+        "hold_width": 0.94,
+        "background_intensity": 0.24,
+        "background_speed": 0.42,
+        "jitter": 0.02
+      }
+    },
+    {
+      "id": "demon",
+      "title": "DEMON",
+      "scene": "res://scenes/demon.tscn",
+      "audio": "res://songs/demon.mp3",
+      "video": "res://medias/demon.ogv",
+      "cover": "res://images/demon.jpg",
+      "bpm": 135.0,
+      "chart_start": 4.0,
+      "seed": 3303,
+      "pattern": "hex",
+      "colors": {
+        "primary": "#16E0B8",
+        "secondary": "#FF3A64",
+        "accent": "#F2FF4B",
+        "dark": "#020908"
+      },
+      "lane_pattern_easy": [
+        0,
+        1,
+        3,
+        4,
+        6,
+        7,
+        5,
+        2,
+        0,
+        3,
+        6,
+        1
+      ],
+      "lane_pattern_hard": [
+        0,
+        3,
+        1,
+        6,
+        2,
+        7,
+        4,
+        1,
+        5,
+        0,
+        6,
+        3,
+        7,
+        2,
+        4,
+        5
+      ],
+      "slides_easy": [
+        {
+          "path": [
+            0,
+            4
+          ],
+          "shape": "v"
+        },
+        {
+          "path": [
+            2,
+            7
+          ],
+          "shape": "arc_ccw",
+          "curve": 0.62
+        },
+        {
+          "path": [
+            6,
+            1
+          ],
+          "shape": "straight"
+        }
+      ],
+      "slides_hard": [
+        {
+          "path": [
+            0,
+            3,
+            6
+          ],
+          "shape": "zigzag"
+        },
+        {
+          "path": [
+            2,
+            7
+          ],
+          "shape": "hook",
+          "curve": -0.75
+        },
+        {
+          "path": [
+            5,
+            1
+          ],
+          "shape": "cross"
+        },
+        {
+          "path": [
+            7,
+            4,
+            0
+          ],
+          "shape": "zigzag"
+        }
+      ],
+      "easy": {
+        "approach": 1.16,
+        "hit_window": 0.25,
+        "perfect_window": 0.095,
+        "step_beats": 2.0,
+        "slide_every": 10,
+        "hold_every": 12,
+        "double_every": 0,
+        "slide_beats": 4.0,
+        "hold_beats": 4.0,
+        "tap_scale": 1.08,
+        "star_scale": 1.08,
+        "hold_width": 1.12,
+        "background_intensity": 0.12,
+        "background_speed": 0.12,
+        "jitter": 0.02
+      },
+      "hard": {
+        "approach": 0.87,
+        "hit_window": 0.17,
+        "perfect_window": 0.068,
+        "step_beats": 1.0,
+        "slide_every": 6,
+        "hold_every": 10,
+        "double_every": 7,
+        "double_distance": 3,
+        "slide_beats": 3.0,
+        "hold_beats": 3.5,
+        "tap_scale": 0.97,
+        "star_scale": 1.0,
+        "hold_width": 0.96,
+        "background_intensity": 0.22,
+        "background_speed": 0.24,
+        "jitter": 0.03
+      }
+    },
+    {
+      "id": "fairy",
+      "title": "FAIRY",
+      "scene": "res://scenes/fairy.tscn",
+      "audio": "res://songs/fairy.mp3",
+      "video": "res://medias/fairy.ogv",
+      "cover": "res://images/fairy.jpg",
+      "bpm": 160.0,
+      "chart_start": 4.0,
+      "seed": 4404,
+      "pattern": "grid",
+      "colors": {
+        "primary": "#FF4CD8",
+        "secondary": "#58F3FF",
+        "accent": "#FFE56B",
+        "dark": "#07030D"
+      },
+      "lane_pattern_easy": [
+        0,
+        2,
+        3,
+        5,
+        6,
+        4,
+        1,
+        7,
+        0,
+        3,
+        6,
+        2
+      ],
+      "lane_pattern_hard": [
+        0,
+        2,
+        5,
+        7,
+        3,
+        1,
+        6,
+        4,
+        0,
+        5,
+        2,
+        7,
+        4,
+        1,
+        3,
+        6
+      ],
+      "slides_easy": [
+        {
+          "path": [
+            7,
+            3
+          ],
+          "shape": "arc_cw",
+          "curve": 0.55
+        },
+        {
+          "path": [
+            0,
+            4
+          ],
+          "shape": "straight"
+        },
+        {
+          "path": [
+            2,
+            6
+          ],
+          "shape": "v"
+        }
+      ],
+      "slides_hard": [
+        {
+          "path": [
+            7,
+            1,
+            4
+          ],
+          "shape": "zigzag"
+        },
+        {
+          "path": [
+            0,
+            5
+          ],
+          "shape": "hook",
+          "curve": 0.7
+        },
+        {
+          "path": [
+            2,
+            6
+          ],
+          "shape": "cross"
+        },
+        {
+          "path": [
+            4,
+            0
+          ],
+          "shape": "arc_ccw",
+          "curve": 0.82
+        }
+      ],
+      "easy": {
+        "approach": 1.1,
+        "hit_window": 0.24,
+        "perfect_window": 0.09,
+        "step_beats": 2.0,
+        "slide_every": 9,
+        "hold_every": 15,
+        "double_every": 0,
+        "slide_beats": 4.0,
+        "hold_beats": 4.0,
+        "tap_scale": 1.08,
+        "star_scale": 1.1,
+        "hold_width": 1.08,
+        "background_intensity": 0.14,
+        "background_speed": 0.16,
+        "jitter": 0.01
+      },
+      "hard": {
+        "approach": 0.83,
+        "hit_window": 0.16,
+        "perfect_window": 0.062,
+        "step_beats": 0.75,
+        "slide_every": 6,
+        "hold_every": 11,
+        "double_every": 5,
+        "double_distance": 3,
+        "slide_beats": 3.0,
+        "hold_beats": 3.0,
+        "tap_scale": 0.96,
+        "star_scale": 1.02,
+        "hold_width": 0.94,
+        "background_intensity": 0.25,
+        "background_speed": 0.32,
+        "jitter": 0.02
+      }
+    },
+    {
+      "id": "naruto",
+      "title": "NARUTO",
+      "scene": "res://scenes/naruto.tscn",
+      "audio": "res://songs/naruto.mp3",
+      "video": "res://medias/naruto.ogv",
+      "cover": "res://images/naruto.jpg",
+      "bpm": 164.0,
+      "chart_start": 4.0,
+      "seed": 5505,
+      "pattern": "radial",
+      "colors": {
+        "primary": "#FF7A00",
+        "secondary": "#2D9CFF",
+        "accent": "#FFF040",
+        "dark": "#070604"
+      },
+      "lane_pattern_easy": [
+        0,
+        3,
+        6,
+        1,
+        4,
+        7,
+        2,
+        5,
+        0,
+        4,
+        1,
+        5
+      ],
+      "lane_pattern_hard": [
+        0,
+        3,
+        6,
+        1,
+        5,
+        2,
+        7,
+        4,
+        0,
+        6,
+        2,
+        5,
+        1,
+        7,
+        3,
+        4
+      ],
+      "slides_easy": [
+        {
+          "path": [
+            0,
+            4
+          ],
+          "shape": "cross"
+        },
+        {
+          "path": [
+            7,
+            2
+          ],
+          "shape": "arc_ccw",
+          "curve": 0.6
+        },
+        {
+          "path": [
+            3,
+            6
+          ],
+          "shape": "straight"
+        }
+      ],
+      "slides_hard": [
+        {
+          "path": [
+            0,
+            3,
+            6
+          ],
+          "shape": "zigzag"
+        },
+        {
+          "path": [
+            7,
+            2
+          ],
+          "shape": "hook",
+          "curve": -0.78
+        },
+        {
+          "path": [
+            1,
+            5
+          ],
+          "shape": "cross"
+        },
+        {
+          "path": [
+            4,
+            0
+          ],
+          "shape": "arc_cw",
+          "curve": 0.88
+        }
+      ],
+      "easy": {
+        "approach": 1.12,
+        "hit_window": 0.24,
+        "perfect_window": 0.09,
+        "step_beats": 2.0,
+        "slide_every": 10,
+        "hold_every": 13,
+        "double_every": 0,
+        "slide_beats": 4.0,
+        "hold_beats": 4.0,
+        "tap_scale": 1.08,
+        "star_scale": 1.08,
+        "hold_width": 1.1,
+        "background_intensity": 0.14,
+        "background_speed": 0.2,
+        "jitter": 0.015
+      },
+      "hard": {
+        "approach": 0.84,
+        "hit_window": 0.16,
+        "perfect_window": 0.064,
+        "step_beats": 0.75,
+        "slide_every": 7,
+        "hold_every": 10,
+        "double_every": 6,
+        "double_distance": 4,
+        "slide_beats": 3.0,
+        "hold_beats": 3.0,
+        "tap_scale": 0.97,
+        "star_scale": 1.02,
+        "hold_width": 0.95,
+        "background_intensity": 0.24,
+        "background_speed": 0.38,
+        "jitter": 0.02
+      }
+    },
+    {
+      "id": "rick_morty",
+      "title": "RICK AND MORTY",
+      "scene": "res://scenes/rick_morty.tscn",
+      "audio": "res://songs/rick_morty.mp3",
+      "video": "res://medias/rick_morty.ogv",
+      "cover": "res://images/rick_morty.jpg",
+      "bpm": 128.0,
+      "chart_start": 4.0,
+      "seed": 6606,
+      "pattern": "hex",
+      "colors": {
+        "primary": "#4CFF55",
+        "secondary": "#47E9FF",
+        "accent": "#E7FF4C",
+        "dark": "#020B05"
+      },
+      "lane_pattern_easy": [
+        0,
+        4,
+        1,
+        5,
+        2,
+        6,
+        3,
+        7,
+        0,
+        2,
+        4,
+        6
+      ],
+      "lane_pattern_hard": [
+        0,
+        5,
+        2,
+        7,
+        4,
+        1,
+        6,
+        3,
+        0,
+        6,
+        1,
+        7,
+        2,
+        4,
+        5,
+        3
+      ],
+      "slides_easy": [
+        {
+          "path": [
+            0,
+            4
+          ],
+          "shape": "hook",
+          "curve": 0.62
+        },
+        {
+          "path": [
+            2,
+            6
+          ],
+          "shape": "arc_cw",
+          "curve": 0.7
+        },
+        {
+          "path": [
+            7,
+            3
+          ],
+          "shape": "cross"
+        }
+      ],
+      "slides_hard": [
+        {
+          "path": [
+            0,
+            5
+          ],
+          "shape": "hook",
+          "curve": 0.92
+        },
+        {
+          "path": [
+            7,
+            2,
+            5
+          ],
+          "shape": "zigzag"
+        },
+        {
+          "path": [
+            1,
+            6
+          ],
+          "shape": "arc_ccw",
+          "curve": 0.88
+        },
+        {
+          "path": [
+            4,
+            0
+          ],
+          "shape": "cross"
+        }
+      ],
+      "easy": {
+        "approach": 1.18,
+        "hit_window": 0.25,
+        "perfect_window": 0.095,
+        "step_beats": 2.0,
+        "slide_every": 8,
+        "hold_every": 14,
+        "double_every": 0,
+        "slide_beats": 4.0,
+        "hold_beats": 4.0,
+        "tap_scale": 1.1,
+        "star_scale": 1.1,
+        "hold_width": 1.1,
+        "background_intensity": 0.15,
+        "background_speed": 0.18,
+        "jitter": 0.02
+      },
+      "hard": {
+        "approach": 0.88,
+        "hit_window": 0.17,
+        "perfect_window": 0.068,
+        "step_beats": 1.0,
+        "slide_every": 6,
+        "hold_every": 11,
+        "double_every": 5,
+        "double_distance": 4,
+        "slide_beats": 3.0,
+        "hold_beats": 3.0,
+        "tap_scale": 0.98,
+        "star_scale": 1.04,
+        "hold_width": 0.96,
+        "background_intensity": 0.27,
+        "background_speed": 0.34,
+        "jitter": 0.04
+      }
+    },
+    {
+      "id": "soul",
+      "title": "SOUL",
+      "scene": "res://scenes/soul.tscn",
+      "audio": "res://songs/soul.mp3",
+      "video": "res://medias/soul.ogv",
+      "cover": "res://images/soul.jpg",
+      "bpm": 152.0,
+      "chart_start": 4.0,
+      "seed": 7707,
+      "pattern": "diamonds",
+      "colors": {
+        "primary": "#FF263F",
+        "secondary": "#FFFFFF",
+        "accent": "#FFE300",
+        "dark": "#080204"
+      },
+      "lane_pattern_easy": [
+        0,
+        2,
+        5,
+        7,
+        4,
+        1,
+        3,
+        6,
+        0,
+        4,
+        2,
+        6
+      ],
+      "lane_pattern_hard": [
+        0,
+        4,
+        2,
+        6,
+        1,
+        5,
+        3,
+        7,
+        0,
+        5,
+        2,
+        7,
+        4,
+        1,
+        6,
+        3
+      ],
+      "slides_easy": [
+        {
+          "path": [
+            0,
+            4
+          ],
+          "shape": "straight"
+        },
+        {
+          "path": [
+            2,
+            6
+          ],
+          "shape": "v"
+        },
+        {
+          "path": [
+            7,
+            3
+          ],
+          "shape": "arc_ccw",
+          "curve": 0.62
+        }
+      ],
+      "slides_hard": [
+        {
+          "path": [
+            0,
+            4
+          ],
+          "shape": "cross"
+        },
+        {
+          "path": [
+            7,
+            2,
+            5
+          ],
+          "shape": "zigzag"
+        },
+        {
+          "path": [
+            1,
+            6
+          ],
+          "shape": "hook",
+          "curve": 0.8
+        },
+        {
+          "path": [
+            3,
+            0
+          ],
+          "shape": "arc_cw",
+          "curve": 0.78
+        }
+      ],
+      "easy": {
+        "approach": 1.14,
+        "hit_window": 0.24,
+        "perfect_window": 0.09,
+        "step_beats": 2.0,
+        "slide_every": 9,
+        "hold_every": 12,
+        "double_every": 0,
+        "slide_beats": 4.0,
+        "hold_beats": 4.0,
+        "tap_scale": 1.08,
+        "star_scale": 1.08,
+        "hold_width": 1.1,
+        "background_intensity": 0.13,
+        "background_speed": 0.14,
+        "jitter": 0.015
+      },
+      "hard": {
+        "approach": 0.84,
+        "hit_window": 0.16,
+        "perfect_window": 0.063,
+        "step_beats": 0.75,
+        "slide_every": 6,
+        "hold_every": 9,
+        "double_every": 5,
+        "double_distance": 4,
+        "slide_beats": 3.0,
+        "hold_beats": 3.0,
+        "tap_scale": 0.96,
+        "star_scale": 1.0,
+        "hold_width": 0.95,
+        "background_intensity": 0.23,
+        "background_speed": 0.3,
+        "jitter": 0.02
+      }
+    }
+  ]
+}
