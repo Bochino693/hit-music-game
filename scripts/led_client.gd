@@ -1,34 +1,43 @@
 extends Node
-## HIT MUSIC — LedClient R21
-## ÚNICA autoridade de comunicação LED do projeto.
+## HIT MUSIC — LED CLIENT CLEAN
 ##
-## Regras:
-## - nenhuma cena abre COM diretamente;
-## - nenhuma cena inicia PowerShell diretamente;
-## - MENU/SCENE/ATTRACT/CLEAR usam um único slot persistente;
-## - durante GAME, somente MULTI é aceito;
-## - MULTI usa um único arquivo game_state.cmd: estado novo substitui o antigo;
-## - PULSE/HIT/ERR/LED/READY/COUNT de versões herdadas são bloqueados no GAME.
+## ÚNICA autoridade de LED do Godot.
+##
+## Editor:
+##   res://BRIDGE_HIT_MUSIC.ps1 é um arquivo físico da raiz do projeto.
+##
+## Executável:
+##   a bridge está dentro do PCK/EXE; o Godot copia os bytes para
+##   user://hit_music_serial/BRIDGE_HIT_MUSIC.ps1 e executa essa cópia.
+##
+## Comunicação:
+##   - porta serial = AUTO (a bridge encontra quem responde HITMUSIC_OK)
+##   - baud = 9600
+##   - UI usa ui_state.cmd persistente
+##   - GAME usa game_state.cmd persistente
+##   - somente MULTI governa LEDs durante a partida
+##   - filas antigas não governam o GAME
 
 const BASE_DIR := "user://hit_music_serial"
 const SPOOL_DIR := BASE_DIR + "/spool"
 
 const ALIVE_PATH := BASE_DIR + "/bridge_alive.txt"
 const READY_PATH := BASE_DIR + "/bridge_ready.txt"
-const STARTING_PATH := BASE_DIR + "/bridge_starting.txt"
 const STOP_PATH := BASE_DIR + "/bridge_stop.txt"
 const GAME_MODE_PATH := BASE_DIR + "/game_mode.flag"
 
-const BRIDGE_SCRIPT_RES := "res://BRIDGE_R21.ps1"
-const COM_PORT := "COM5"
-const BAUD_RATE := 9600
+const BRIDGE_RES := "res://BRIDGE_HIT_MUSIC.ps1"
+const BRIDGE_USER := BASE_DIR + "/BRIDGE_HIT_MUSIC.ps1"
 
-const GAME_STATE_NAME := "game_state.cmd"
 const UI_STATE_NAME := "ui_state.cmd"
+const GAME_STATE_NAME := "game_state.cmd"
 
-const ALIVE_TIMEOUT_SEC := 2.5
-const START_RETRY_MS := 4000
+const BAUD_RATE := 9600
+const PORT_REQUEST := "AUTO"
+
 const CHECK_INTERVAL_MS := 500
+const START_RETRY_MS := 5000
+const ALIVE_TIMEOUT_SEC := 2.0
 
 enum LedMode {
 	NORMAL,
@@ -37,73 +46,83 @@ enum LedMode {
 }
 
 var _mode: int = LedMode.NORMAL
-var _seq: int = 0
+var _bridge_path: String = ""
 var _last_check_ms: int = -999999
 var _last_start_ms: int = -999999
-var _bridge_pid: int = -1
-var _warned_missing_bridge: bool = false
-
-var _last_game_state: String = ""
 var _last_ui_state: String = ""
+var _last_game_state: String = ""
+var _seq: int = 0
 
 
 func _ready() -> void:
-	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(SPOOL_DIR))
-	_remove_if_exists(ProjectSettings.globalize_path(STOP_PATH))
-	_remove_if_exists(ProjectSettings.globalize_path(GAME_MODE_PATH))
+	DirAccess.make_dir_recursive_absolute(
+		ProjectSettings.globalize_path(SPOOL_DIR)
+	)
+
+	_remove_if_exists(
+		ProjectSettings.globalize_path(STOP_PATH)
+	)
+	_remove_if_exists(
+		ProjectSettings.globalize_path(GAME_MODE_PATH)
+	)
+
+	_bridge_path = _resolve_bridge_path()
+	set_process(true)
+	ensure_bridge()
+
+	# A abertura deve acender mesmo que opening.gd não tenha lógica LED.
+	begin_opening()
+	send("ATTRACT")
+
+
+func _process(_delta: float) -> void:
+	var now := Time.get_ticks_msec()
+
+	if now - _last_check_ms < CHECK_INTERVAL_MS:
+		return
+
+	_last_check_ms = now
 	ensure_bridge()
 
 
-func tick() -> void:
-	var now := Time.get_ticks_msec()
-	if now - _last_check_ms < CHECK_INTERVAL_MS:
-		return
-	_last_check_ms = now
-
-	if not bridge_alive():
-		ensure_bridge()
-
-
 func bridge_ready() -> bool:
-	return FileAccess.file_exists(READY_PATH) and bridge_alive()
+	return (
+		FileAccess.file_exists(READY_PATH)
+		and _alive_is_fresh()
+	)
 
 
 func bridge_alive() -> bool:
-	var path := ProjectSettings.globalize_path(ALIVE_PATH)
-	if not FileAccess.file_exists(path):
-		return false
-
-	var modified := FileAccess.get_modified_time(path)
-	if modified <= 0:
-		return false
-
-	var age := Time.get_unix_time_from_system() - float(modified)
-	return age >= -1.0 and age <= ALIVE_TIMEOUT_SEC
+	return bridge_ready()
 
 
 func ensure_bridge() -> void:
 	if OS.get_name() != "Windows":
 		return
 
-	if bridge_alive():
+	if bridge_ready():
 		return
 
 	var now := Time.get_ticks_msec()
+
 	if now - _last_start_ms < START_RETRY_MS:
 		return
+
 	_last_start_ms = now
 
-	var bridge_path := ProjectSettings.globalize_path(BRIDGE_SCRIPT_RES)
-	if not FileAccess.file_exists(bridge_path):
-		if not _warned_missing_bridge:
-			_warned_missing_bridge = true
-			push_error("HIT MUSIC: BRIDGE_R21.ps1 não encontrado: " + bridge_path)
+	if _bridge_path.is_empty():
+		_bridge_path = _resolve_bridge_path()
+
+	if (
+		_bridge_path.is_empty()
+		or not FileAccess.file_exists(_bridge_path)
+	):
+		push_error(
+			"HIT MUSIC LED: bridge física não encontrada."
+		)
 		return
 
-	_write_text_atomic(
-		ProjectSettings.globalize_path(STARTING_PATH),
-		str(Time.get_unix_time_from_system())
-	)
+	var powershell := _powershell_path()
 
 	var args := PackedStringArray([
 		"-NoLogo",
@@ -111,18 +130,28 @@ func ensure_bridge() -> void:
 		"-NonInteractive",
 		"-ExecutionPolicy", "Bypass",
 		"-WindowStyle", "Hidden",
-		"-File", bridge_path,
-		"-ComPort", COM_PORT,
+		"-File", _bridge_path,
+		"-ComPort", PORT_REQUEST,
 		"-BaudRate", str(BAUD_RATE),
-		"-SpoolPath", ProjectSettings.globalize_path(SPOOL_DIR)
+		"-SpoolPath",
+		ProjectSettings.globalize_path(SPOOL_DIR),
 	])
 
-	_bridge_pid = OS.create_process("powershell.exe", args, false)
+	var pid := OS.create_process(
+		powershell,
+		args,
+		false
+	)
 
-	if _bridge_pid <= 0:
-		push_error("HIT MUSIC: falha ao iniciar BRIDGE_R21.ps1.")
+	if pid <= 0:
+		push_error(
+			"HIT MUSIC LED: não foi possível iniciar a bridge."
+		)
 	else:
-		print("HIT MUSIC: bridge R21 iniciada. PID=", _bridge_pid)
+		print(
+			"HIT MUSIC LED: bridge iniciada. PID=",
+			pid
+		)
 
 
 func begin_opening() -> void:
@@ -149,21 +178,20 @@ func begin_stage() -> void:
 func begin_game() -> void:
 	ensure_bridge()
 
-	# Primeiro marca GAME. A bridge para de consumir qualquer fila antiga.
 	_mode = LedMode.GAME
-	_write_text_atomic(
+
+	_write_atomic(
 		ProjectSettings.globalize_path(GAME_MODE_PATH),
 		"GAME\n"
 	)
 
-	# Depois elimina tudo que sobrou de MENU/COUNT/SCENE.
-	_clear_all_spool_files()
-
+	_clear_transient_queue()
 	_last_game_state = ""
-	_last_ui_state = ""
 
-	# O primeiro frame da partida é sempre preto.
-	send_state("MULTI 000000000000000000000000000000000000000000000000")
+	# Primeiro quadro da partida é sempre totalmente apagado.
+	send_state(
+		"MULTI 000000000000000000000000000000000000000000000000"
+	)
 
 
 func end_game() -> void:
@@ -172,14 +200,12 @@ func end_game() -> void:
 
 	_leave_game_mode()
 	_last_game_state = ""
-
-	# CLEAR também é estado persistente: se a abertura ou menu publicar
-	# ATTRACT/MENU logo depois, o estado novo substitui este CLEAR.
 	send("CLEAR")
 
 
 func send(command: String) -> bool:
 	var cmd := command.strip_edges()
+
 	if cmd.is_empty():
 		return false
 
@@ -187,27 +213,31 @@ func send(command: String) -> bool:
 
 	var op := cmd.get_slice(" ", 0).to_upper()
 
-	# GAME: somente o quadro completo MULTI pode tocar no hardware.
 	if _mode == LedMode.GAME:
 		if op == "MULTI":
 			return send_state(cmd)
 
-		# Toda lógica herdada antiga é deliberadamente ignorada:
-		# LED/PULSE/HIT/ERR/READY/SCENE/etc.
+		# Bloqueia LED/HIT/PULSE/ERR/READY herdados durante GAME.
 		return true
 
-	# MENU: apenas estado persistente de MENU/CLEAR.
-	# Feedback antigo HIT/PULSE é ignorado para manter D2/D3 fixos.
 	if _mode == LedMode.MENU:
 		if op == "MENU" or op == "CLEAR":
-			return _send_ui_state(cmd)
+			return _write_ui_state(cmd)
+
+		# No seletor não existe flash físico.
 		return true
 
-	# Fora do GAME, estes comandos representam um estado persistente.
-	if op in ["ATTRACT", "MENU", "SCENE", "SCENE2", "ALL", "CLEAR"]:
-		return _send_ui_state(cmd)
+	if op in [
+		"ATTRACT",
+		"MENU",
+		"SCENE",
+		"SCENE2",
+		"ALL",
+		"CLEAR",
+	]:
+		return _write_ui_state(cmd)
 
-	# Contagem/efeitos temporários podem continuar em fila fora da partida.
+	# Apenas efeitos temporários fora do GAME entram em fila.
 	return _enqueue_transient(cmd)
 
 
@@ -217,6 +247,7 @@ func enviar(command: String) -> bool:
 
 func send_state(command: String) -> bool:
 	var cmd := command.strip_edges()
+
 	if not cmd.begins_with("MULTI "):
 		return false
 
@@ -225,8 +256,14 @@ func send_state(command: String) -> bool:
 
 	_last_game_state = cmd
 
-	var state_path := ProjectSettings.globalize_path(SPOOL_DIR).path_join(GAME_STATE_NAME)
-	return _write_text_atomic(state_path, cmd + "\n")
+	var spool_abs := ProjectSettings.globalize_path(
+		SPOOL_DIR
+	)
+
+	return _write_atomic(
+		spool_abs.path_join(GAME_STATE_NAME),
+		cmd + "\n"
+	)
 
 
 func clear() -> bool:
@@ -234,20 +271,31 @@ func clear() -> bool:
 
 
 func apagar_guias() -> bool:
-	return send_state("MULTI 000000000000000000000000000000000000000000000000")
+	if _mode == LedMode.GAME:
+		return send_state(
+			"MULTI 000000000000000000000000000000000000000000000000"
+		)
+
+	return send("CLEAR")
 
 
-func menu(cor_a: Color, cor_b: Color, idx_a: int = 0, idx_b: int = 1) -> bool:
+func menu(
+	cor_a: Color,
+	cor_b: Color,
+	idx_a: int = 0,
+	idx_b: int = 1
+) -> bool:
 	return send(
-		"MENU %d %d %d %d %d %d %d %d" % [
-			roundi(cor_a.r * 255.0),
-			roundi(cor_a.g * 255.0),
-			roundi(cor_a.b * 255.0),
-			roundi(cor_b.r * 255.0),
-			roundi(cor_b.g * 255.0),
-			roundi(cor_b.b * 255.0),
-			idx_a,
-			idx_b
+		"MENU %d %d %d %d %d %d %d %d"
+		% [
+			roundi(clampf(cor_a.r, 0.0, 1.0) * 255.0),
+			roundi(clampf(cor_a.g, 0.0, 1.0) * 255.0),
+			roundi(clampf(cor_a.b, 0.0, 1.0) * 255.0),
+			roundi(clampf(cor_b.r, 0.0, 1.0) * 255.0),
+			roundi(clampf(cor_b.g, 0.0, 1.0) * 255.0),
+			roundi(clampf(cor_b.b, 0.0, 1.0) * 255.0),
+			clampi(idx_a, 0, 7),
+			clampi(idx_b, 0, 7),
 		]
 	)
 
@@ -259,8 +307,18 @@ func shutdown() -> void:
 	_mode = LedMode.NORMAL
 	_leave_game_mode()
 
-	var stop_abs := ProjectSettings.globalize_path(STOP_PATH)
-	var file := FileAccess.open(stop_abs, FileAccess.WRITE)
+	# Estado final visível caso a bridge ainda processe antes do STOP.
+	_write_ui_state("CLEAR")
+
+	var stop_abs := ProjectSettings.globalize_path(
+		STOP_PATH
+	)
+
+	var file := FileAccess.open(
+		stop_abs,
+		FileAccess.WRITE
+	)
+
 	if file != null:
 		file.store_string("STOP\n")
 		file.flush()
@@ -271,98 +329,264 @@ func _exit_tree() -> void:
 	shutdown()
 
 
-func _send_ui_state(cmd: String) -> bool:
+func _write_ui_state(cmd: String) -> bool:
 	if cmd == _last_ui_state:
 		return true
 
 	_last_ui_state = cmd
 
-	var path := ProjectSettings.globalize_path(SPOOL_DIR).path_join(UI_STATE_NAME)
-	return _write_text_atomic(path, cmd + "\n")
+	var spool_abs := ProjectSettings.globalize_path(
+		SPOOL_DIR
+	)
+
+	return _write_atomic(
+		spool_abs.path_join(UI_STATE_NAME),
+		cmd + "\n"
+	)
 
 
 func _enqueue_transient(cmd: String) -> bool:
-	var spool_abs := ProjectSettings.globalize_path(SPOOL_DIR)
-	DirAccess.make_dir_recursive_absolute(spool_abs)
+	var spool_abs := ProjectSettings.globalize_path(
+		SPOOL_DIR
+	)
+
+	DirAccess.make_dir_recursive_absolute(
+		spool_abs
+	)
 
 	_seq = (_seq + 1) % 1000000
-	var name := "cmd_%020d_%06d_%06d.cmd" % [
-		Time.get_ticks_usec(),
-		OS.get_process_id(),
-		_seq
-	]
 
-	return _write_text_atomic(spool_abs.path_join(name), cmd + "\n")
+	var name := (
+		"cmd_%020d_%06d_%06d.cmd"
+		% [
+			Time.get_ticks_usec(),
+			OS.get_process_id(),
+			_seq,
+		]
+	)
+
+	return _write_atomic(
+		spool_abs.path_join(name),
+		cmd + "\n"
+	)
 
 
 func _leave_game_mode() -> void:
-	_remove_if_exists(ProjectSettings.globalize_path(GAME_MODE_PATH))
 	_remove_if_exists(
-		ProjectSettings.globalize_path(SPOOL_DIR).path_join(GAME_STATE_NAME)
+		ProjectSettings.globalize_path(
+			GAME_MODE_PATH
+		)
 	)
 
 
 func _clear_transient_queue() -> void:
-	var spool_abs := ProjectSettings.globalize_path(SPOOL_DIR)
-	var dir := DirAccess.open(spool_abs)
-	if dir == null:
-		return
+	var spool_abs := ProjectSettings.globalize_path(
+		SPOOL_DIR
+	)
 
-	for name in dir.get_files():
-		if name.begins_with("cmd_") and name.ends_with(".cmd"):
-			dir.remove(name)
+	var dir := DirAccess.open(
+		spool_abs
+	)
 
-
-func _clear_all_spool_files() -> void:
-	var spool_abs := ProjectSettings.globalize_path(SPOOL_DIR)
-	DirAccess.make_dir_recursive_absolute(spool_abs)
-
-	var dir := DirAccess.open(spool_abs)
 	if dir == null:
 		return
 
 	for name in dir.get_files():
 		if (
-			name.ends_with(".cmd")
-			or name.ends_with(".processing")
-			or name.contains(".tmp_")
-			or name.ends_with(".tmp")
+			name.begins_with("cmd_")
+			and name.ends_with(".cmd")
 		):
 			dir.remove(name)
 
 
-func _remove_if_exists(path: String) -> void:
-	if FileAccess.file_exists(path):
-		DirAccess.remove_absolute(path)
+func _resolve_bridge_path() -> String:
+	if OS.has_feature("editor"):
+		var editor_path := ProjectSettings.globalize_path(
+			BRIDGE_RES
+		)
+
+		if FileAccess.file_exists(
+			editor_path
+		):
+			return editor_path
+
+		push_error(
+			"HIT MUSIC LED: BRIDGE_HIT_MUSIC.ps1 não está "
+			+ "na raiz do projeto."
+		)
+		return ""
+
+	# No executável, a bridge pode estar dentro do PCK.
+	var source := FileAccess.open(
+		BRIDGE_RES,
+		FileAccess.READ
+	)
+
+	if source == null:
+		push_error(
+			"HIT MUSIC LED: bridge não entrou no export."
+		)
+		return ""
+
+	var size := source.get_length()
+
+	if size <= 0:
+		source.close()
+		return ""
+
+	var bytes := source.get_buffer(
+		size
+	)
+	source.close()
+
+	var target := FileAccess.open(
+		BRIDGE_USER,
+		FileAccess.WRITE
+	)
+
+	if target == null:
+		push_error(
+			"HIT MUSIC LED: falha ao extrair bridge para user://."
+		)
+		return ""
+
+	target.store_buffer(
+		bytes
+	)
+	target.flush()
+	target.close()
+
+	var physical := ProjectSettings.globalize_path(
+		BRIDGE_USER
+	)
+
+	if not FileAccess.file_exists(
+		physical
+	):
+		return ""
+
+	return physical
 
 
-func _write_text_atomic(final_path: String, content: String) -> bool:
-	var tmp := final_path + ".tmp_%d_%d" % [
-		OS.get_process_id(),
-		Time.get_ticks_usec()
-	]
+func _powershell_path() -> String:
+	var windir := OS.get_environment(
+		"WINDIR"
+	)
 
-	var file := FileAccess.open(tmp, FileAccess.WRITE)
-	if file == null:
-		push_error("HIT MUSIC: não foi possível criar " + tmp)
+	if not windir.is_empty():
+		var candidate := windir.path_join(
+			"System32"
+		)
+		candidate = candidate.path_join(
+			"WindowsPowerShell"
+		)
+		candidate = candidate.path_join(
+			"v1.0"
+		)
+		candidate = candidate.path_join(
+			"powershell.exe"
+		)
+
+		if FileAccess.file_exists(
+			candidate
+		):
+			return candidate
+
+	return "powershell.exe"
+
+
+func _alive_is_fresh() -> bool:
+	var path := ProjectSettings.globalize_path(
+		ALIVE_PATH
+	)
+
+	if not FileAccess.file_exists(
+		path
+	):
 		return false
 
-	file.store_string(content)
+	var modified := FileAccess.get_modified_time(
+		path
+	)
+
+	if modified <= 0:
+		return false
+
+	var age := (
+		Time.get_unix_time_from_system()
+		- float(modified)
+	)
+
+	return (
+		age >= -1.0
+		and age <= ALIVE_TIMEOUT_SEC
+	)
+
+
+func _remove_if_exists(path: String) -> void:
+	if FileAccess.file_exists(
+		path
+	):
+		DirAccess.remove_absolute(
+			path
+		)
+
+
+func _write_atomic(
+	final_path: String,
+	content: String
+) -> bool:
+	var tmp := (
+		final_path
+		+ ".tmp_%d_%d"
+		% [
+			OS.get_process_id(),
+			Time.get_ticks_usec(),
+		]
+	)
+
+	var file := FileAccess.open(
+		tmp,
+		FileAccess.WRITE
+	)
+
+	if file == null:
+		push_error(
+			"HIT MUSIC LED: falha ao criar estado temporário."
+		)
+		return false
+
+	file.store_string(
+		content
+	)
 	file.flush()
 	file.close()
 
-	for _attempt in range(5):
-		if FileAccess.file_exists(final_path):
-			DirAccess.remove_absolute(final_path)
+	for _attempt in range(8):
+		if FileAccess.file_exists(
+			final_path
+		):
+			DirAccess.remove_absolute(
+				final_path
+			)
 
-		var err := DirAccess.rename_absolute(tmp, final_path)
+		var err := DirAccess.rename_absolute(
+			tmp,
+			final_path
+		)
+
 		if err == OK:
 			return true
 
-		OS.delay_msec(1)
+		OS.delay_msec(
+			2
+		)
 
-	if FileAccess.file_exists(tmp):
-		DirAccess.remove_absolute(tmp)
+	_remove_if_exists(
+		tmp
+	)
 
-	push_error("HIT MUSIC: falha ao publicar estado LED atômico.")
+	push_error(
+		"HIT MUSIC LED: falha ao publicar estado."
+	)
 	return false
