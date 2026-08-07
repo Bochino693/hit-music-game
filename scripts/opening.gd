@@ -281,35 +281,8 @@ const COR_PORTAL_SECUNDARIA: Color = Color(0.10, 0.58, 1.0, 1.0)
 const COR_NEON_ROSA: Color = Color(1.0, 0.15, 0.85)
 const COR_NEON_CIANO: Color = Color(0.25, 0.85, 1.0)
 
-# --- Comunicação persistente dos LEDs: COM5 / 9600 ---
-# A abertura e o jogo usam exatamente os mesmos caminhos em user://.
-# Assim, a ponte PowerShell continua aberta durante change_scene_to_file().
-const SERIAL_ATIVADO: bool = true
-const SERIAL_PORTA: String = "COM5"
-const SERIAL_BAUD: int = 9600
-const SERIAL_HEARTBEAT_INTERVALO_MS: int = 500
-const SERIAL_VERIFICACAO_INTERVALO_MS: int = 700
-const SERIAL_HEARTBEAT_TIMEOUT_SEG: float = 8.0
-const SERIAL_ALIVE_TIMEOUT_SEG: float = 2.5
-const SERIAL_STARTING_TIMEOUT_SEG: float = 6.0
-
-var _serial_base_dir: String = ""
-var _serial_spool_dir: String = ""
-var _serial_heartbeat_path: String = ""
-var _serial_alive_path: String = ""
-var _serial_ready_path: String = ""
-var _serial_starting_path: String = ""
-var _serial_ultimo_heartbeat_msec: int = -999999
-var _serial_ultima_verificacao_msec: int = -999999
-var _serial_sequencia: int = 0
-var _serial_inicializado: bool = false
-var _serial_spawn_solicitado: bool = false
-var _serial_pendentes: Array[String] = []
-var _serial_aviso_mostrado: bool = false
-var _serial_pronta_anunciada: bool = false
-var _serial_conexao_aviso_mostrado: bool = false
-var _serial_tentativa_inicio_msec: int = -1
-
+# --- LEDs / comunicação ---
+# Toda comunicação passa pelo Autoload /root/LedClient.
 var _led_assinatura_atual: String = ""
 var _led_feedback_bloqueio_ate_msec: int = 0
 
@@ -335,10 +308,15 @@ var _portal_entrada_em_andamento: bool = false
 
 
 func _ready() -> void:
+	var cliente_modo := get_node_or_null("/root/LedClient")
+	if cliente_modo != null and cliente_modo.has_method("begin_opening"):
+		cliente_modo.call("begin_opening")
 	print("ABERTURA HIT MUSIC — PORTAL TEMÁTICO LIMPO UNIFICADO ATIVO")
 	RenderingServer.set_default_clear_color(Color(0.002, 0.005, 0.018, 1.0))
 	Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)  # padrão do gabinete: sem mouse visível
-	_arduino_inicializar()
+	var cliente := get_node_or_null("/root/LedClient")
+	if cliente != null and cliente.has_method("ensure_bridge"):
+		cliente.call("ensure_bridge")
 	_arduino_enviar_forcado("ATTRACT")
 	_montar_cena()
 	_criar_transicao_portal()
@@ -349,8 +327,9 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
-	_arduino_tick_serial()
-
+	var cliente_serial := get_node_or_null("/root/LedClient")
+	if cliente_serial != null and cliente_serial.has_method("tick"):
+		cliente_serial.call("tick")
 	# A borda temática parada também é redesenhada para manter o movimento suave.
 	if _borda_portal_inicio != null and is_instance_valid(_borda_portal_inicio):
 		if _borda_portal_inicio.visible:
@@ -682,452 +661,35 @@ func _iniciar_portal_entrada() -> void:
 # COM5 PERSISTENTE ENTRE AS DUAS CENAS
 # ---------------------------------------------------------------
 func _arduino_enviar_unico(linha: String) -> void:
-	var comando: String = linha.strip_edges()
+	var comando := linha.strip_edges()
 	if comando.is_empty() or comando == _led_assinatura_atual:
 		return
-	if _arduino_enviar_linha(comando):
-		_led_assinatura_atual = comando
+	var cliente := get_node_or_null("/root/LedClient")
+	if cliente != null and cliente.has_method("send"):
+		if bool(cliente.call("send", comando)):
+			_led_assinatura_atual = comando
 
 
 func _arduino_enviar_forcado(linha: String) -> void:
-	var comando: String = linha.strip_edges()
+	var comando := linha.strip_edges()
 	if comando.is_empty():
 		return
 	_led_assinatura_atual = ""
-	_arduino_enviar_linha(comando)
-
-
-func _powershell_literal(valor: String) -> String:
-	return "'" + valor.replace("'", "''") + "'"
-
-
-func _serial_configurar_caminhos() -> void:
-	if not _serial_base_dir.is_empty():
-		return
-
-	_serial_base_dir = ProjectSettings.globalize_path("user://hit_music_serial")
-	_serial_spool_dir = _serial_base_dir.path_join("spool")
-	_serial_heartbeat_path = _serial_base_dir.path_join("godot_heartbeat.txt")
-	_serial_alive_path = _serial_base_dir.path_join("bridge_alive.txt")
-	_serial_ready_path = _serial_base_dir.path_join("bridge_ready.txt")
-	_serial_starting_path = _serial_base_dir.path_join("bridge_starting.txt")
-
-	DirAccess.make_dir_recursive_absolute(_serial_spool_dir)
-
-
-func _serial_escrever_atomico(caminho_final: String, conteudo: String) -> bool:
-	var temporario: String = caminho_final + ".tmp_%d_%d" % [
-		OS.get_process_id(),
-		Time.get_ticks_usec()
-	]
-
-	var arquivo := FileAccess.open(temporario, FileAccess.WRITE)
-	if arquivo == null:
-		return false
-
-	arquivo.store_string(conteudo)
-	arquivo.flush()
-	arquivo.close()
-
-	if FileAccess.file_exists(caminho_final):
-		DirAccess.remove_absolute(caminho_final)
-
-	var erro: int = DirAccess.rename_absolute(temporario, caminho_final)
-	if erro != OK:
-		if FileAccess.file_exists(temporario):
-			DirAccess.remove_absolute(temporario)
-		return false
-	return true
-
-
-func _serial_arquivo_recente(caminho: String, idade_maxima_seg: float) -> bool:
-	if not FileAccess.file_exists(caminho):
-		return false
-
-	var modificado: int = FileAccess.get_modified_time(caminho)
-	if modificado <= 0:
-		return false
-
-	var idade: float = Time.get_unix_time_from_system() - float(modificado)
-	return idade >= -1.0 and idade <= idade_maxima_seg
-
-
-func _serial_bridge_viva() -> bool:
-	return _serial_arquivo_recente(_serial_alive_path, SERIAL_ALIVE_TIMEOUT_SEG)
-
-
-func _serial_bridge_iniciando() -> bool:
-	return _serial_arquivo_recente(_serial_starting_path, SERIAL_STARTING_TIMEOUT_SEG)
-
-
-func _serial_limpar_spool_antigo() -> void:
-	var pasta := DirAccess.open(_serial_spool_dir)
-	if pasta == null:
-		return
-
-	for nome in pasta.get_files():
-		if nome.ends_with(".cmd") or nome.contains(".tmp_"):
-			pasta.remove(nome)
-
-
-func _arduino_montar_script_shell() -> String:
-	var spool_ps: String = _powershell_literal(_serial_spool_dir)
-	var heartbeat_ps: String = _powershell_literal(_serial_heartbeat_path)
-	var alive_ps: String = _powershell_literal(_serial_alive_path)
-	var ready_ps: String = _powershell_literal(_serial_ready_path)
-	var starting_ps: String = _powershell_literal(_serial_starting_path)
-	var porta_ps: String = _powershell_literal(SERIAL_PORTA)
-
-	return """
-$ErrorActionPreference = 'Stop'
-$spool = %s
-$heartbeat = %s
-$alive = %s
-$ready = %s
-$starting = %s
-$portaNome = %s
-$baud = %d
-$timeoutHb = %s
-$serial = $null
-$ultimoAlive = [DateTime]::MinValue
-$semHeartbeatDesde = $null
-
-function Touch-File([string]$path) {
-	[System.IO.File]::WriteAllText($path, [DateTime]::UtcNow.Ticks.ToString())
-}
-
-New-Item -ItemType Directory -Path $spool -Force | Out-Null
-
-try {
-	while ($true) {
-		$agoraUtc = [DateTime]::UtcNow
-		if (($agoraUtc - $ultimoAlive).TotalMilliseconds -ge 250) {
-			Touch-File $alive
-			$ultimoAlive = $agoraUtc
-		}
-
-		if (-not (Test-Path -LiteralPath $heartbeat)) {
-			if ($null -eq $semHeartbeatDesde) {
-				$semHeartbeatDesde = $agoraUtc
-			}
-			elseif (($agoraUtc - $semHeartbeatDesde).TotalSeconds -gt $timeoutHb) {
-				break
-			}
-			Start-Sleep -Milliseconds 100
-			continue
-		}
-
-		$semHeartbeatDesde = $null
-		$idadeHb = ($agoraUtc - (Get-Item -LiteralPath $heartbeat).LastWriteTimeUtc).TotalSeconds
-		if ($idadeHb -gt $timeoutHb) {
-			break
-		}
-
-		if ($null -eq $serial -or -not $serial.IsOpen) {
-			Remove-Item -LiteralPath $ready -Force -ErrorAction SilentlyContinue
-
-			try {
-				$serial = [System.IO.Ports.SerialPort]::new(
-					$portaNome,
-					$baud,
-					[System.IO.Ports.Parity]::None,
-					8,
-					[System.IO.Ports.StopBits]::One
-				)
-				$serial.Handshake = [System.IO.Ports.Handshake]::None
-				$serial.NewLine = "`n"
-				$serial.Encoding = [System.Text.Encoding]::ASCII
-				$serial.DtrEnable = $false
-				$serial.RtsEnable = $false
-				$serial.WriteTimeout = 250
-				$serial.ReadTimeout = 90
-				$serial.Open()
-
-				# O Nano pode reiniciar quando a porta abre. Esperamos o boot terminar.
-				Start-Sleep -Milliseconds 1900
-				$serial.DiscardOutBuffer()
-				$serial.DiscardInBuffer()
-
-				# Handshake: só considera a COM5 pronta se estiver com o sketch correto.
-				$serial.Write("HELLO`n")
-				$confirmado = $false
-				$limiteHandshake = [DateTime]::UtcNow.AddMilliseconds(1400)
-
-				while (-not $confirmado -and [DateTime]::UtcNow -lt $limiteHandshake) {
-					try {
-						$resposta = $serial.ReadLine().Trim()
-						if ($resposta -eq 'HITMUSIC_OK') {
-							$confirmado = $true
-						}
-					}
-					catch [System.TimeoutException] {}
-				}
-
-				if (-not $confirmado) {
-					throw 'A COM5 abriu, mas o Arduino não respondeu HITMUSIC_OK.'
-				}
-
-				$serial.Write("CLEAR`n")
-				Touch-File $ready
-				Remove-Item -LiteralPath $starting -Force -ErrorAction SilentlyContinue
-			}
-			catch {
-				try {
-					if ($null -ne $serial) {
-						$serial.Close()
-						$serial.Dispose()
-					}
-				} catch {}
-				$serial = $null
-				Start-Sleep -Milliseconds 500
-				continue
-			}
-		}
-
-		$arquivos = Get-ChildItem -LiteralPath $spool -Filter '*.cmd' -File |
-			Sort-Object -Property Name
-
-		foreach ($arquivoCmd in $arquivos) {
-			try {
-				$cmd = [System.IO.File]::ReadAllText($arquivoCmd.FullName).Trim()
-				if ($cmd.Length -gt 0) {
-					$serial.Write($cmd + "`n")
-				}
-				Remove-Item -LiteralPath $arquivoCmd.FullName -Force
-			}
-			catch {
-				try {
-					if ($null -ne $serial) {
-						$serial.Close()
-						$serial.Dispose()
-					}
-				} catch {}
-				$serial = $null
-				Remove-Item -LiteralPath $ready -Force -ErrorAction SilentlyContinue
-				break
-			}
-		}
-
-		Start-Sleep -Milliseconds 8
-	}
-}
-finally {
-	try {
-		if ($null -ne $serial -and $serial.IsOpen) {
-			$serial.Write("CLEAR`n")
-			$serial.Close()
-		}
-		if ($null -ne $serial) {
-			$serial.Dispose()
-		}
-	} catch {}
-
-	Remove-Item -LiteralPath $ready -Force -ErrorAction SilentlyContinue
-	Remove-Item -LiteralPath $alive -Force -ErrorAction SilentlyContinue
-	Remove-Item -LiteralPath $starting -Force -ErrorAction SilentlyContinue
-}
-""" % [
-		spool_ps,
-		heartbeat_ps,
-		alive_ps,
-		ready_ps,
-		starting_ps,
-		porta_ps,
-		SERIAL_BAUD,
-		str(SERIAL_HEARTBEAT_TIMEOUT_SEG).replace(",", ".")
-	]
-
-
-func _serial_gravar_heartbeat() -> void:
-	_serial_configurar_caminhos()
-	var arquivo := FileAccess.open(_serial_heartbeat_path, FileAccess.WRITE)
-	if arquivo == null:
-		return
-	arquivo.store_string(str(Time.get_unix_time_from_system()))
-	arquivo.flush()
-	arquivo.close()
-
-
-func _arduino_inicializar() -> void:
-	if not SERIAL_ATIVADO:
-		return
-
-	_serial_configurar_caminhos()
-	_serial_inicializado = true
-	if _serial_tentativa_inicio_msec < 0:
-		_serial_tentativa_inicio_msec = Time.get_ticks_msec()
-	_serial_gravar_heartbeat()
-
-	if OS.get_name() != "Windows":
-		if not _serial_aviso_mostrado:
-			_serial_aviso_mostrado = true
-			push_warning("A comunicação COM5 deste jogo foi preparada para Windows.")
-		return
-
-	if _serial_bridge_viva() or _serial_bridge_iniciando():
-		return
-
-	# Só limpamos comandos antigos quando realmente será criada uma ponte nova.
-	_serial_limpar_spool_antigo()
-	_serial_escrever_atomico(
-		_serial_starting_path,
-		str(Time.get_unix_time_from_system())
-	)
-
-	var script_shell: String = _arduino_montar_script_shell()
-	var script_codificado: String = Marshalls.raw_to_base64(
-		script_shell.to_utf16_buffer()
-	)
-	var argumentos := PackedStringArray([
-		"-NoLogo",
-		"-NoProfile",
-		"-NonInteractive",
-		"-ExecutionPolicy", "Bypass",
-		"-WindowStyle", "Hidden",
-		"-EncodedCommand", script_codificado
-	])
-
-	var pid: int = OS.create_process("powershell.exe", argumentos, false)
-	if pid <= 0:
-		if FileAccess.file_exists(_serial_starting_path):
-			DirAccess.remove_absolute(_serial_starting_path)
-		if not _serial_aviso_mostrado:
-			_serial_aviso_mostrado = true
-			push_warning("Não consegui iniciar a ponte invisível da COM5.")
-		return
-
-	_serial_spawn_solicitado = true
-	_serial_aviso_mostrado = false
-	_serial_tentativa_inicio_msec = Time.get_ticks_msec()
-	_serial_conexao_aviso_mostrado = false
-	print("HIT MUSIC: ponte persistente solicitada em COM5 / 9600. PID: ", pid)
-
-
-func _serial_criar_comando_atomico(comando: String) -> bool:
-	_serial_configurar_caminhos()
-	_serial_sequencia += 1
-
-	var nome_base: String = "cmd_%020d_%06d_%d" % [
-		Time.get_ticks_usec(),
-		_serial_sequencia,
-		OS.get_process_id()
-	]
-	var caminho_final: String = _serial_spool_dir.path_join(nome_base + ".cmd")
-	return _serial_escrever_atomico(caminho_final, comando + "\n")
-
-
-func _serial_reduzir_pendentes(comando: String) -> void:
-	var prefixo: String = comando.get_slice(" ", 0).to_upper()
-
-	if prefixo == "ATTRACT" or prefixo == "BLINKALL" or prefixo == "READY":
-		_serial_pendentes.clear()
-	elif prefixo == "COUNT":
-		for i in range(_serial_pendentes.size() - 1, -1, -1):
-			if _serial_pendentes[i].begins_with("COUNT "):
-				_serial_pendentes.remove_at(i)
-	elif prefixo == "LED" or prefixo == "CLEAR":
-		for i in range(_serial_pendentes.size() - 1, -1, -1):
-			var antigo: String = _serial_pendentes[i]
-			if antigo.begins_with("LED ") or antigo == "CLEAR":
-				_serial_pendentes.remove_at(i)
-
-	_serial_pendentes.append(comando)
-	while _serial_pendentes.size() > 32:
-		_serial_pendentes.pop_front()
-
-
-func _serial_drenar_pendentes() -> void:
-	if _serial_pendentes.is_empty():
-		return
-
-	var enviados: int = 0
-	while not _serial_pendentes.is_empty() and enviados < 6:
-		var comando: String = _serial_pendentes[0]
-		if not _serial_criar_comando_atomico(comando):
-			break
-		_serial_pendentes.pop_front()
-		enviados += 1
-
-
-func _arduino_tick_serial() -> void:
-	if not SERIAL_ATIVADO:
-		return
-
-	if not _serial_inicializado:
-		_arduino_inicializar()
-
-	var agora: int = Time.get_ticks_msec()
-
-	if agora - _serial_ultimo_heartbeat_msec >= SERIAL_HEARTBEAT_INTERVALO_MS:
-		_serial_ultimo_heartbeat_msec = agora
-		_serial_gravar_heartbeat()
-
-	var ponte_pronta: bool = (
-		_serial_bridge_viva()
-		and FileAccess.file_exists(_serial_ready_path)
-	)
-	if ponte_pronta:
-		if not _serial_pronta_anunciada:
-			_serial_pronta_anunciada = true
-			_serial_conexao_aviso_mostrado = false
-			print("HIT MUSIC: Arduino confirmado na COM5 (HITMUSIC_OK).")
-	else:
-		if _serial_pronta_anunciada:
-			_serial_pronta_anunciada = false
-			_serial_tentativa_inicio_msec = agora
-		if (
-			_serial_tentativa_inicio_msec >= 0
-			and agora - _serial_tentativa_inicio_msec > 7000
-			and not _serial_conexao_aviso_mostrado
-		):
-			_serial_conexao_aviso_mostrado = true
-			push_warning(
-				"COM5 ainda não confirmou HITMUSIC_OK. Feche o Monitor Serial "
-				+ "e confira o sketch e a alimentação."
-			)
-
-	_serial_drenar_pendentes()
-
-	if agora - _serial_ultima_verificacao_msec < SERIAL_VERIFICACAO_INTERVALO_MS:
-		return
-
-	_serial_ultima_verificacao_msec = agora
-	if not _serial_bridge_viva() and not _serial_bridge_iniciando():
-		_serial_spawn_solicitado = false
-		_arduino_inicializar()
-
-
-func _arduino_enviar_linha(linha: String) -> bool:
-	if not SERIAL_ATIVADO:
-		return false
-
-	var comando: String = linha.strip_edges()
-	if comando.is_empty():
-		return false
-
-	if not _serial_inicializado:
-		_arduino_inicializar()
-
-	if _serial_criar_comando_atomico(comando):
-		return true
-
-	_serial_reduzir_pendentes(comando)
-	return false
-
+	var cliente := get_node_or_null("/root/LedClient")
+	if cliente != null and cliente.has_method("send"):
+		cliente.call("send", comando)
 
 func _serial_encerrar_aplicativo() -> void:
-	if not SERIAL_ATIVADO:
-		return
-
-	# O comando é gravado antes do processo fechar. Depois, sem novos heartbeats,
-	# a ponte encerra sozinha e também envia CLEAR no bloco finally.
-	_arduino_enviar_forcado("CLEAR")
-	_serial_drenar_pendentes()
+	# O LedClient é a única autoridade serial.
+	# Ao fechar o aplicativo, ele manda o pedido de shutdown para a bridge,
+	# que envia CLEAR e libera a COM5.
+	var cliente := get_node_or_null("/root/LedClient")
+	if cliente != null and cliente.has_method("shutdown"):
+		cliente.call("shutdown")
 
 
 func _notification(what: int) -> void:
-	# IMPORTANTE: não encerra no PREDELETE, porque PREDELETE também acontece
-	# durante a troca abertura -> jogo e jogo -> abertura.
+	# Não encerra serial durante troca de cena; somente ao fechar a janela.
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		_serial_encerrar_aplicativo()
 

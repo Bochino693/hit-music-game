@@ -1,9 +1,25 @@
 extends RefCounted
+## Adaptador de compatibilidade R21.
+## NÃO escreve arquivos e NÃO abre serial.
+## Toda chamada antiga é encaminhada ao Autoload /root/LedClient.
 
 const MENU_NEXT_COLOR: Color = Color(0.0, 0.72, 1.0, 1.0)
 const MENU_SELECT_COLOR: Color = Color(1.0, 0.82, 0.08, 1.0)
 
-static var _command_sequence: int = 0
+
+static func _client() -> Node:
+	var main_loop := Engine.get_main_loop()
+	if main_loop is SceneTree:
+		return (main_loop as SceneTree).root.get_node_or_null("LedClient")
+	return null
+
+
+static func send_raw(command: String) -> void:
+	var client := _client()
+	if client == null:
+		return
+	if client.has_method("send"):
+		client.call("send", command)
 
 
 static func clear_all() -> void:
@@ -11,10 +27,14 @@ static func clear_all() -> void:
 
 
 static func set_lane(lane: int, color: Color) -> void:
-	var rgb: Vector3i = _rgb(color)
+	var rgb := _rgb(color)
 	send_raw(
-		"LED %d %d %d %d"
-		% [clampi(lane, 0, 7), rgb.x, rgb.y, rgb.z]
+		"LED %d %d %d %d" % [
+			clampi(lane, 0, 7),
+			rgb.x,
+			rgb.y,
+			rgb.z
+		]
 	)
 
 
@@ -22,20 +42,15 @@ static func clear_lane(lane: int) -> void:
 	send_raw("LED %d 0 0 0" % clampi(lane, 0, 7))
 
 
-static func hit_lane(
-	lane: int,
-	color: Color,
-	duration_ms: int = 240
-) -> void:
-	var rgb: Vector3i = _rgb(color)
+static func hit_lane(lane: int, color: Color, duration_ms: int = 240) -> void:
+	var rgb := _rgb(color)
 	send_raw(
-		"HIT %d %d %d %d %d"
-		% [
+		"HIT %d %d %d %d %d" % [
 			clampi(lane, 0, 7),
 			rgb.x,
 			rgb.y,
 			rgb.z,
-			clampi(duration_ms, 90, 1400),
+			clampi(duration_ms, 90, 1400)
 		]
 	)
 
@@ -48,31 +63,22 @@ static func pulse_lane(lane: int) -> void:
 	send_raw("PULSE %d" % clampi(lane, 0, 7))
 
 
-static func menu_state(
-	_index: int = 0,
-	color: Color = MENU_NEXT_COLOR
-) -> void:
-	menu_state_colors(
-		color,
-		MENU_SELECT_COLOR
-	)
+static func menu_state(_index: int = 0, color: Color = MENU_NEXT_COLOR) -> void:
+	menu_state_colors(color, MENU_SELECT_COLOR)
 
 
-static func menu_state_colors(
-	next_color: Color,
-	select_color: Color
-) -> void:
-	var next_rgb: Vector3i = _rgb(next_color)
-	var select_rgb: Vector3i = _rgb(select_color)
+static func menu_state_colors(next_color: Color, select_color: Color) -> void:
+	var next_rgb := _rgb(next_color)
+	var select_rgb := _rgb(select_color)
+
 	send_raw(
-		"MENU %d %d %d %d %d %d"
-		% [
+		"MENU %d %d %d %d %d %d" % [
 			next_rgb.x,
 			next_rgb.y,
 			next_rgb.z,
 			select_rgb.x,
 			select_rgb.y,
-			select_rgb.z,
+			select_rgb.z
 		]
 	)
 
@@ -85,21 +91,18 @@ static func menu_select_feedback() -> void:
 	hit_lane(1, MENU_SELECT_COLOR, 210)
 
 
-static func scene_state(
-	primary: Color,
-	secondary: Color
-) -> void:
-	var first_rgb: Vector3i = _rgb(primary)
-	var second_rgb: Vector3i = _rgb(secondary)
+static func scene_state(primary: Color, secondary: Color) -> void:
+	var first_rgb := _rgb(primary)
+	var second_rgb := _rgb(secondary)
+
 	send_raw(
-		"SCENE2 %d %d %d %d %d %d"
-		% [
+		"SCENE2 %d %d %d %d %d %d" % [
 			first_rgb.x,
 			first_rgb.y,
 			first_rgb.z,
 			second_rgb.x,
 			second_rgb.y,
-			second_rgb.z,
+			second_rgb.z
 		]
 	)
 
@@ -114,56 +117,6 @@ static func countdown_value(value: int) -> void:
 
 static func ready() -> void:
 	send_raw("READY")
-
-
-static func send_raw(command: String) -> void:
-	var clean_command: String = command.strip_edges()
-	if clean_command.is_empty():
-		return
-
-	var base_dir: String = ProjectSettings.globalize_path(
-		"user://hit_music_serial"
-	)
-	var spool_dir: String = base_dir.path_join("spool")
-	DirAccess.make_dir_recursive_absolute(spool_dir)
-
-	_command_sequence += 1
-	var file_name: String = (
-		"cmd_%020d_%06d_%d.cmd"
-		% [
-			Time.get_ticks_usec(),
-			_command_sequence,
-			OS.get_process_id(),
-		]
-	)
-	var final_path: String = spool_dir.path_join(file_name)
-	var temporary_path: String = final_path + ".tmp"
-	var file: FileAccess = FileAccess.open(
-		temporary_path,
-		FileAccess.WRITE
-	)
-	if file == null:
-		push_warning(
-			"Falha ao escrever comando LED: "
-			+ clean_command
-		)
-		return
-
-	file.store_string(clean_command + "\n")
-	file.flush()
-	file.close()
-
-	var rename_error: Error = DirAccess.rename_absolute(
-		temporary_path,
-		final_path
-	)
-	if rename_error != OK:
-		if FileAccess.file_exists(temporary_path):
-			DirAccess.remove_absolute(temporary_path)
-		push_warning(
-			"Falha ao publicar comando LED: "
-			+ clean_command
-		)
 
 
 static func _rgb(color: Color) -> Vector3i:

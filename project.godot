@@ -18,7 +18,6 @@ config/icon="res://icon.svg"
 
 [autoload]
 
-HitMusicSerial="*uid://byp8ssdfgdavq"
 LedClient="*uid://w5v1vy88pnej"
 
 [display]

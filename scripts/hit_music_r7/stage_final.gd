@@ -1,207 +1,182 @@
 extends "res://scripts/hit_music_r7/stage_v11.gd"
-
-const FINAL_LED_CLIENT: Script = preload(
-	"res://scripts/hit_music_r7/led_client.gd"
-)
+## STAGE FINAL R21
+##
+## A cadeia antiga continua fornecendo gameplay/UI, mas NÃO governa
+## fisicamente a mesa durante PLAYING: LedClient bloqueia seus LED/PULSE/HIT.
+##
+## Este arquivo publica o ÚNICO quadro MULTI das 8 lanes.
 
 const LED_PRELIGHT_SECONDS: float = 1.18
 const LED_LATE_SECONDS: float = 0.18
-const LED_HEARTBEAT_SECONDS: float = 0.10
-const SCENE_HEARTBEAT_SECONDS: float = 0.28
+const HOLD_COLOR: Color = Color(1.0, 0.82, 0.06, 1.0)
 
-var _final_led_timer: float = 0.0
-var _final_scene_timer: float = 0.0
-var _final_lane_active: Array[bool] = [
-	false, false, false, false,
-	false, false, false, false,
-]
-var _final_lane_color: Array[Color] = [
-	Color.BLACK, Color.BLACK, Color.BLACK, Color.BLACK,
-	Color.BLACK, Color.BLACK, Color.BLACK, Color.BLACK,
-]
+var _r21_was_playing: bool = false
 
 
 func _ready() -> void:
 	Engine.max_fps = 160
 	super._ready()
 
-	# O renderer final ja possui o fundo geometrico completo.
-	# O overlay antigo e removido para nao deixar arcos cortados.
+	# Remove overlay antigo como já fazia a versão final.
 	if _theme_overlay_v11 != null:
 		_theme_overlay_v11.queue_free()
 		_theme_overlay_v11 = null
 
-	_final_led_timer = 0.0
-	_final_scene_timer = 0.0
-	_send_scene_state_final()
+	var client := _led_client_r21()
+	if client != null:
+		if client.has_method("begin_stage"):
+			client.call("begin_stage")
+		_send_scene_state_r21(client)
 
 
 func _process(delta: float) -> void:
 	super._process(delta)
 
-	var state_name: String = _state_name()
+	var playing := _state_name() == "playing"
 
-	# Renova a cena durante o jogo sem cancelar a contagem regressiva.
-	if (
-		state_name == "presentation"
-		or state_name == "pre_game"
-		or (
-			state_name == "playing"
-			and _song_time >= 0.70
-		)
-	):
-		_final_scene_timer -= delta
-		if _final_scene_timer <= 0.0:
-			_send_scene_state_final()
-			_final_scene_timer = SCENE_HEARTBEAT_SECONDS
-	else:
-		_final_scene_timer = 0.0
+	if playing:
+		_publish_game_frame_r21()
+	elif _r21_was_playing:
+		var client := _led_client_r21()
+		if client != null and client.has_method("end_game"):
+			client.call("end_game")
 
-	if state_name == "playing":
-		_final_led_timer -= delta
-		if _final_led_timer <= 0.0:
-			_update_lane_leds_final()
-			_final_led_timer = LED_HEARTBEAT_SECONDS
-	else:
-		_final_led_timer = 0.0
-		_clear_lane_leds_final()
+	_r21_was_playing = playing
 
 
-func _handle_lane_press(
-	lane: int,
-	_source: String
-) -> void:
-	var safe_lane: int = clampi(lane, 0, 7)
-	var input_color: Color = _nearest_lane_color_final(safe_lane)
+func _start_playing() -> void:
+	# Entra em GAME ANTES de chamar super.
+	# Assim READY/SCENE/PULSE herdados já são bloqueados.
+	var client := _led_client_r21()
+	if client != null and client.has_method("begin_game"):
+		client.call("begin_game")
 
-	# Resposta imediata do input fisico/touch.
-	# lane 0=D2, lane 1=D3 ... lane 7=D9.
-	FINAL_LED_CLIENT.set_lane(safe_lane, input_color)
-	FINAL_LED_CLIENT.pulse_lane(safe_lane)
+	_r21_was_playing = true
+	super._start_playing()
 
-	super._handle_lane_press(lane, _source)
+	_publish_game_frame_r21()
 
 
-func _update_lane_leds_final() -> void:
-	if _events.is_empty():
-		_clear_lane_leds_final()
-		return
+func _exit_tree() -> void:
+	var client := _led_client_r21()
+	if client != null and client.has_method("end_game"):
+		client.call("end_game")
 
-	var desired_active: Array[bool] = [
-		false, false, false, false,
-		false, false, false, false,
-	]
-	var desired_color: Array[Color] = [
-		Color.BLACK, Color.BLACK, Color.BLACK, Color.BLACK,
-		Color.BLACK, Color.BLACK, Color.BLACK, Color.BLACK,
-	]
-	var nearest_time: Array[float] = [
-		99999.0, 99999.0, 99999.0, 99999.0,
-		99999.0, 99999.0, 99999.0, 99999.0,
-	]
+
+# stage_v11 chama esta função em seu _process.
+# Ela fica vazia de propósito: o estado físico é composto somente
+# por _publish_game_frame_r21().
+func _update_gameplay_lane_leds(_delta: float) -> void:
+	pass
+
+
+# stage_v11 também tenta aplicar SCENE em vários momentos.
+# A cena temática é enviada somente uma vez no _ready().
+func _apply_scene_led_theme() -> void:
+	pass
+
+
+func _publish_game_frame_r21() -> void:
+	var colors: Array[Color] = []
+	var best_distance: Array[float] = []
+	var hold_active: Array[bool] = []
+
+	for _lane in range(8):
+		colors.append(Color.BLACK)
+		best_distance.append(INF)
+		hold_active.append(false)
 
 	for event_value in _events:
 		if not (event_value is Dictionary):
 			continue
 
 		var event: Dictionary = event_value as Dictionary
+
 		if bool(event.get("_resolved", false)):
 			continue
 
-		var type_name: String = str(
-			event.get("type", "tap")
-		)
+		var type_name := str(event.get("type", "tap")).to_lower()
+
+		# Slide/arraste nunca acende LED físico.
+		if type_name == "slide" or type_name == "drag" or type_name == "swipe":
+			continue
+
 		if type_name != "tap" and type_name != "hold":
 			continue
 
-		var lane: int = int(event.get("lane", -1))
+		var lane := int(event.get("lane", -1))
 		if lane < 0 or lane > 7:
 			continue
 
-		var start_time: float = _event_start_time(event)
-		var end_time: float = _event_end_time(
-			event,
-			start_time
-		)
+		var start_time := _event_start_time(event)
+		var end_time := _event_end_time(event, start_time)
 
-		if (
-			type_name == "hold"
-			and _song_time >= start_time
-			and _song_time <= end_time
-		):
-			desired_active[lane] = true
-			desired_color[lane] = _event_color(event)
-			nearest_time[lane] = -1.0
+		if type_name == "hold":
+			# Hold: amarelo desde a aproximação até o final.
+			if (
+				_song_time >= start_time - LED_PRELIGHT_SECONDS
+				and _song_time <= end_time
+			):
+				colors[lane] = HOLD_COLOR
+				hold_active[lane] = true
+				best_distance[lane] = 0.0
 			continue
 
-		var time_until_hit: float = start_time - _song_time
-		if time_until_hit < -LED_LATE_SECONDS:
+		# TAP: cor RGB do próprio tazo/evento.
+		var dt := start_time - _song_time
+
+		if dt > LED_PRELIGHT_SECONDS:
 			continue
-		if time_until_hit > LED_PRELIGHT_SECONDS:
+		if dt < -LED_LATE_SECONDS:
 			continue
-
-		if time_until_hit < nearest_time[lane]:
-			desired_active[lane] = true
-			desired_color[lane] = _event_color(event)
-			nearest_time[lane] = time_until_hit
-
-	for lane_index in range(8):
-		if desired_active[lane_index]:
-			# Heartbeat: reenvia mesmo quando a lane ja estava acesa.
-			# Isso elimina apagamentos ou comandos perdidos.
-			FINAL_LED_CLIENT.set_lane(
-				lane_index,
-				desired_color[lane_index]
-			)
-			_final_lane_active[lane_index] = true
-			_final_lane_color[lane_index] = desired_color[lane_index]
-		elif _final_lane_active[lane_index]:
-			FINAL_LED_CLIENT.clear_lane(lane_index)
-			_final_lane_active[lane_index] = false
-			_final_lane_color[lane_index] = Color.BLACK
-
-
-func _clear_lane_leds_final() -> void:
-	for lane_index in range(8):
-		if _final_lane_active[lane_index]:
-			FINAL_LED_CLIENT.clear_lane(lane_index)
-
-		_final_lane_active[lane_index] = false
-		_final_lane_color[lane_index] = Color.BLACK
-
-
-func _nearest_lane_color_final(lane: int) -> Color:
-	var selected_color: Color = _primary_color()
-	var best_distance: float = 99999.0
-
-	for event_value in _events:
-		if not (event_value is Dictionary):
+		if hold_active[lane]:
 			continue
 
-		var event: Dictionary = event_value as Dictionary
-		if bool(event.get("_resolved", false)):
-			continue
-		if int(event.get("lane", -1)) != lane:
-			continue
+		var distance := absf(dt)
+		if distance < best_distance[lane]:
+			best_distance[lane] = distance
+			colors[lane] = _event_color(event)
 
-		var type_name: String = str(
-			event.get("type", "tap")
-		)
-		if type_name != "tap" and type_name != "hold":
-			continue
+	var frame := _multi_command_r21(colors)
 
-		var distance: float = absf(
-			_event_start_time(event) - _song_time
-		)
-		if distance < best_distance:
-			best_distance = distance
-			selected_color = _event_color(event)
-
-	return selected_color
+	var client := _led_client_r21()
+	if client != null and client.has_method("send_state"):
+		client.call("send_state", frame)
 
 
-func _send_scene_state_final() -> void:
-	FINAL_LED_CLIENT.scene_state(
-		_primary_color(),
-		_accent_color()
+func _multi_command_r21(colors: Array[Color]) -> String:
+	var payload := ""
+
+	for lane in range(8):
+		var color := Color.BLACK
+		if lane < colors.size():
+			color = colors[lane]
+
+		payload += "%02X%02X%02X" % [
+			clampi(roundi(color.r * 255.0), 0, 255),
+			clampi(roundi(color.g * 255.0), 0, 255),
+			clampi(roundi(color.b * 255.0), 0, 255)
+		]
+
+	return "MULTI " + payload
+
+
+func _send_scene_state_r21(client: Node) -> void:
+	var primary := _primary_color()
+	var accent := _accent_color()
+
+	client.call(
+		"send",
+		"SCENE2 %d %d %d %d %d %d" % [
+			roundi(primary.r * 255.0),
+			roundi(primary.g * 255.0),
+			roundi(primary.b * 255.0),
+			roundi(accent.r * 255.0),
+			roundi(accent.g * 255.0),
+			roundi(accent.b * 255.0)
+		]
 	)
+
+
+func _led_client_r21() -> Node:
+	return get_node_or_null("/root/LedClient")
