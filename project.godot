@@ -16,6 +16,11 @@ run/print_header=false
 config/features=PackedStringArray("4.6", "GL Compatibility")
 config/icon="res://icon.svg"
 
+[autoload]
+
+HitMusicSerial="*uid://byp8ssdfgdavq"
+LedClient="*uid://w5v1vy88pnej"
+
 [display]
 
 window/size/mode=3
