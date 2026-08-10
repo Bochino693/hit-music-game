@@ -14,6 +14,7 @@ config/name="beta12"
 run/main_scene="uid://n8scq8ls6ftf"
 run/print_header=false
 config/features=PackedStringArray("4.6", "GL Compatibility")
+boot_splash/show_image=false
 config/icon="res://icon.svg"
 
 [autoload]
