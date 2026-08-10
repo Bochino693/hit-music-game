@@ -3,6 +3,9 @@ extends "res://scripts/hit_music_r7/selector_v10.gd"
 const LED_CLIENT_V11: Script = preload(
 	"res://scripts/hit_music_r7/led_client.gd"
 )
+const SETTINGS_GATE: Script = preload(
+	"res://scripts/hit_music_r7/settings_gate.gd"
+)
 
 var _drag_total: float = 0.0
 var _menu_led_timer_v11: Timer
@@ -28,6 +31,9 @@ func _refresh_menu_leds_v11() -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if SETTINGS_GATE.try_open_from_keyboard(event):
+		return
+
 	if _transitioning:
 		return
 

@@ -3,6 +3,9 @@ extends "res://scripts/hit_music_r7/stage.gd"
 const CHART_FACTORY_V9: Script = preload(
 	"res://scripts/hit_music_r7/chart_factory_v9.gd"
 )
+const SETTINGS_GATE: Script = preload(
+	"res://scripts/hit_music_r7/settings_gate.gd"
+)
 
 const ERROR_LIMIT_RATIO: float = 0.30
 const DEFAULT_PLAYER_NAME: String = "PLAYER 1"
@@ -79,6 +82,8 @@ func _process(delta: float) -> void:
 
 func _input(event: InputEvent) -> void:
 	if _state == GameState.PRESENTATION and not _difficulty_confirmed:
+		if SETTINGS_GATE.try_open_from_keyboard(event):
+			return
 		if event is InputEventScreenTouch:
 			var touch: InputEventScreenTouch = event
 			if touch.pressed:
@@ -198,10 +203,53 @@ func _confirm_difficulty() -> void:
 	if _difficulty_confirmed:
 		return
 
+	# So aqui o credito e de fato gasto — apertar Start na abertura so
+	# adiciona credito (modo credito) ou so avanca (modo livre); e ao
+	# confirmar a musica/dificuldade que a partida realmente comeca.
+	if not ArcadeSettings.try_consume_credit():
+		_show_insert_coin_warning()
+		return
+
 	_difficulty_confirmed = true
 	_show_pre_game_overlay(false)
 	_state_time = 0.0
 	_start_countdown()
+
+
+var _insert_coin_label: Label
+var _insert_coin_tween: Tween
+
+
+## Aviso "INSIRA FICHA" quando o jogador tenta comecar sem credito no
+## modo credito — pisca por cima do painel de dificuldade e some
+## sozinho, sem travar a tela nem exigir mais nenhuma acao.
+func _show_insert_coin_warning() -> void:
+	if _insert_coin_label == null or not is_instance_valid(_insert_coin_label):
+		if _hud_layer == null:
+			return
+		var font: Font = _load_font()
+		_insert_coin_label = _make_label(
+			"INSIRA FICHA",
+			int(_radius * 0.058),
+			HORIZONTAL_ALIGNMENT_CENTER,
+			font
+		)
+		_insert_coin_label.add_theme_color_override("font_color", Color(1.0, 0.20, 0.24, 1.0))
+		_insert_coin_label.size = Vector2(_radius * 1.0, _radius * 0.16)
+		_insert_coin_label.position = _center - _insert_coin_label.size * 0.5
+		_insert_coin_label.modulate.a = 0.0
+		_insert_coin_label.z_index = 60
+		_hud_layer.add_child(_insert_coin_label)
+
+	if _insert_coin_tween != null and _insert_coin_tween.is_valid():
+		_insert_coin_tween.kill()
+
+	LED_CLIENT.menu_next_feedback()
+	_insert_coin_label.visible = true
+	_insert_coin_label.modulate.a = 1.0
+	_insert_coin_tween = create_tween()
+	_insert_coin_tween.tween_interval(0.9)
+	_insert_coin_tween.tween_property(_insert_coin_label, "modulate:a", 0.0, 0.35)
 
 
 func _build_pre_game_overlay() -> void:

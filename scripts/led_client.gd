@@ -53,6 +53,10 @@ var _last_ui_state: String = ""
 var _last_game_state: String = ""
 var _seq: int = 0
 
+## Porta forcada manualmente pela tela de Configuracoes (teste de LED
+## identificou porta errada). Vazio = detecção automatica (AUTO).
+var _forced_port: String = ""
+
 ## Fila de escrita assincrona. As chamadas de gameplay (hit/miss/troca de
 ## lane) nunca tocam disco na thread principal: elas so atualizam
 ## _pending e sinalizam a thread de escrita. Isso elimina o
@@ -141,6 +145,8 @@ func ensure_bridge() -> void:
 
 	var powershell := _powershell_path()
 
+	var com_port: String = PORT_REQUEST if _forced_port.is_empty() else _forced_port
+
 	var args := PackedStringArray([
 		"-NoLogo",
 		"-NoProfile",
@@ -148,7 +154,7 @@ func ensure_bridge() -> void:
 		"-ExecutionPolicy", "Bypass",
 		"-WindowStyle", "Hidden",
 		"-File", _bridge_path,
-		"-ComPort", PORT_REQUEST,
+		"-ComPort", com_port,
 		"-BaudRate", str(BAUD_RATE),
 		"-SpoolPath",
 		ProjectSettings.globalize_path(SPOOL_DIR),
@@ -169,6 +175,54 @@ func ensure_bridge() -> void:
 			"HIT MUSIC LED: bridge iniciada. PID=",
 			pid
 		)
+
+
+## Usado pela tela de Configuracoes (teste de LED) quando o operador
+## identifica que a bridge conectou na porta errada e quer forcar uma
+## porta especifica (ex.: "COM5").
+func set_forced_port(port: String) -> void:
+	_forced_port = port.strip_edges()
+	_restart_bridge()
+
+
+func clear_forced_port() -> void:
+	if _forced_port.is_empty():
+		return
+	_forced_port = ""
+	_restart_bridge()
+
+
+func forced_port() -> String:
+	return _forced_port
+
+
+func _restart_bridge() -> void:
+	if OS.get_name() != "Windows":
+		return
+
+	# Sinaliza a bridge atual (se houver) pra encerrar, e libera o
+	# cooldown de start pra tentar subir uma nova com a porta certa
+	# assim que o processo antigo sair.
+	var stop_abs := ProjectSettings.globalize_path(STOP_PATH)
+	var file := FileAccess.open(stop_abs, FileAccess.WRITE)
+	if file != null:
+		file.store_string("STOP\n")
+		file.flush()
+		file.close()
+
+	_last_start_ms = -999999
+
+	var tree := get_tree()
+	if tree != null:
+		var timer := tree.create_timer(0.5)
+		timer.timeout.connect(_on_restart_bridge_delay)
+	else:
+		ensure_bridge()
+
+
+func _on_restart_bridge_delay() -> void:
+	_remove_if_exists(ProjectSettings.globalize_path(STOP_PATH))
+	ensure_bridge()
 
 
 func begin_opening() -> void:
