@@ -1,0 +1,45 @@
+HIT MUSIC R21 — UMA ÚNICA AUTORIDADE LED
+
+CAUSA REAL ENCONTRADA:
+- Carmine NÃO usa scripts/play.gd.
+- Carmine -> stage_final.gd -> stage_v11.gd -> stage_v10.gd -> stage.gd.
+- stage.gd já acendia LED ao spawnar tap/hold.
+- stage_v10 adicionava PULSE/HIT/ERR/READY/BLINKALL.
+- stage_v11 tinha outra atualização de lanes.
+- stage_final tinha mais um heartbeat de lanes e SCENE.
+- scripts/hit_music_r7/led_client.gd escrevia direto no spool.
+- project.godot ainda tinha HitMusicSerial + LedClient.
+- ABRIR.ps1 iniciava outra BRIDGE.ps1 manualmente.
+
+R21:
+1. só LedClient fica no Autoload;
+2. o cliente antigo vira mero adaptador para /root/LedClient;
+3. durante GAME o LedClient aceita SOMENTE MULTI;
+4. stage_final compõe um único quadro das 8 lanes;
+5. tap = cor RGB do evento/tazo;
+6. hold = amarelo;
+7. slide/arraste = não acende hardware;
+8. selector usa D2/D3 fixos, sem heartbeat;
+9. opening usa o mesmo LedClient;
+10. ABRIR.ps1 não abre bridge;
+11. somente BRIDGE_R21 existe como ponte atual;
+12. estados antigos são arquivados fora do projeto.
+
+INSTALAÇÃO:
+- mantenha-se na branch limpeza-led-definitiva;
+- extraia este pacote na raiz do beta-12;
+- execute:
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\LIMPAR_E_INSTALAR_R21.ps1"
+
+Depois abra o Godot normalmente.
+
+TESTE:
+Opening -> efeito fica estável.
+Selector -> somente D2 e D3 ficam fixos.
+Carmine:
+- sem nota: todas apagadas;
+- tap A: somente D2 na cor do tazo;
+- tap H: somente D9 na cor do tazo;
+- hold: lane selecionada amarela;
+- slide: nenhuma lane acende.
