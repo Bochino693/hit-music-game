@@ -8,9 +8,10 @@ func _ready() -> void:
 	if _hard_chip != null:
 		_hard_chip.visible = false
 	if _instruction_label != null:
-		_instruction_label.text = (
-			"A  PROXIMA     D  ANTERIOR     B/START  SELECIONAR"
-		)
+		# Sem letra de botao: quem joga nao sabe o que e "A" ou "D".
+		# O que cada botao faz aparece dentro do circulo, colado no
+		# botao fisico correspondente.
+		_instruction_label.text = "ESCOLHA SUA MÚSICA"
 	if _mode_label != null:
 		_mode_label.text = "DIFICULDADE NA FASE"
 

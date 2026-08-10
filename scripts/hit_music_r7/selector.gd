@@ -167,6 +167,8 @@ func _draw() -> void:
 		var sparkle: float = 0.5 + 0.5 * sin(_visual_time * 1.8 + float(index) * 0.73)
 		draw_circle(point_position, _radius * (0.003 + sparkle * 0.002), Color(color.r, color.g, color.b, 0.28 + sparkle * 0.32), true)
 
+	_draw_nav_arrows()
+
 
 func _input(event: InputEvent) -> void:
 	if _transitioning:
@@ -353,55 +355,148 @@ func _build_scene() -> void:
 	_build_nav_hints(font)
 
 
-## Chips de navegacao: pequenos, uniformes e discretos, ao lado da
-## lista, avisando o que cada botao fisico faz. A seta acompanha o
-## sentido real do movimento (A sobe, D desce).
+## Coordenadas (em espaco do _content_root) das dicas de navegacao.
+## Ficam TODAS dentro do circulo e proximas do botao fisico que
+## representam: subir em cima da lista, descer embaixo da lista e
+## start a direita, embaixo do painel da musica. A lista ocupa
+## x 0.19R..0.97R (centro 0.58R) e o painel de info x 1.03R..1.78R.
+const NAV_LIST_CENTER_X: float = 0.58
+const NAV_UP_CHIP_Y: float = 0.335
+const NAV_DOWN_CHIP_Y: float = 1.575
+const NAV_UP_ARROW_Y: float = 0.235
+const NAV_DOWN_ARROW_Y: float = 1.675
+const NAV_START_CENTER: Vector2 = Vector2(1.405, 1.66)
+
+
+## Dicas de navegacao com a acao escrita ("SUBIR", "DESCER",
+## "START") em vez da letra do botao — quem joga nao sabe o que e
+## "A" ou "D". Cada chip fica junto do botao fisico correspondente.
 func _build_nav_hints(font: Font) -> void:
 	var hints := [
-		{"text": "▲  A", "y": 0.30},
-		{"text": "START  B", "y": 0.50},
-		{"text": "▼  D", "y": 0.70},
+		{
+			"text": "SUBIR",
+			"center": Vector2(NAV_LIST_CENTER_X, NAV_UP_CHIP_Y),
+			"size": Vector2(0.30, 0.082),
+			"accent": false,
+		},
+		{
+			"text": "DESCER",
+			"center": Vector2(NAV_LIST_CENTER_X, NAV_DOWN_CHIP_Y),
+			"size": Vector2(0.30, 0.082),
+			"accent": false,
+		},
+		{
+			"text": "START",
+			"center": NAV_START_CENTER,
+			"size": Vector2(0.34, 0.098),
+			"accent": true,
+		},
 	]
 
-	var chip_size := Vector2(_radius * 0.235, _radius * 0.085)
 	for hint_value in hints:
 		var hint: Dictionary = hint_value
+		var chip_size: Vector2 = Vector2(hint["size"]) * _radius
+		var chip_center: Vector2 = Vector2(hint["center"]) * _radius
+		var is_accent: bool = bool(hint["accent"])
 
 		var chip := Panel.new()
 		chip.size = chip_size
-		chip.position = Vector2(
-			_radius * 0.055,
-			_content_root.size.y * float(hint["y"]) - chip_size.y * 0.5
-		)
+		chip.position = chip_center - chip_size * 0.5
 		chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		chip.add_theme_stylebox_override("panel", _nav_hint_style())
+		chip.add_theme_stylebox_override("panel", _nav_hint_style(is_accent))
 		_content_root.add_child(chip)
 
 		var label := _make_label(
 			str(hint["text"]),
-			int(_radius * 0.030),
+			int(_radius * (0.034 if is_accent else 0.029)),
 			HORIZONTAL_ALIGNMENT_CENTER,
 			font
 		)
 		label.position = Vector2.ZERO
 		label.size = chip_size
-		label.add_theme_color_override("font_color", Color(0.84, 0.90, 1.0, 1.0))
+		label.add_theme_color_override(
+			"font_color",
+			Color(1.0, 0.90, 0.42, 1.0) if is_accent else Color(0.82, 0.89, 1.0, 1.0)
+		)
 		_fit_label_to_width(
 			label,
 			chip_size.x * 0.86,
-			int(_radius * 0.030),
-			int(_radius * 0.016)
+			int(_radius * (0.034 if is_accent else 0.029)),
+			int(_radius * 0.015)
 		)
 		chip.add_child(label)
 
 
-func _nav_hint_style() -> StyleBoxFlat:
+## Pilula moderna: cantos totalmente arredondados, fundo quase preto
+## translucido e borda fina. O chip de START usa a cor de destaque
+## pra se diferenciar dos dois de navegacao.
+func _nav_hint_style(accent: bool) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.020, 0.035, 0.070, 0.82)
-	style.border_color = Color(0.30, 0.62, 0.92, 0.46)
+	style.bg_color = (
+		Color(0.10, 0.075, 0.015, 0.88)
+		if accent
+		else Color(0.015, 0.030, 0.060, 0.84)
+	)
+	style.border_color = (
+		Color(1.0, 0.82, 0.22, 0.72)
+		if accent
+		else Color(0.34, 0.66, 0.95, 0.42)
+	)
 	style.set_border_width_all(2)
-	style.set_corner_radius_all(int(maxf(8.0, _radius * 0.030)))
+	style.set_corner_radius_all(999)
 	return style
+
+
+## Converte coordenada local do _content_root para a tela, pra que o
+## _draw() (Node2D) desenhe alinhado com os chips (Control).
+func _content_to_screen(local_position: Vector2) -> Vector2:
+	return _center - Vector2(_radius, _radius) + local_position
+
+
+## Setas acima e abaixo da lista. Desenhadas como triangulos em vez
+## de caracteres "▲/▼" porque a fonte do jogo (Bungee) nao tem esses
+## glifos — viraria quadradinho vazio na tela.
+func _draw_nav_arrows() -> void:
+	var pulse: float = 0.5 + 0.5 * sin(_visual_time * 3.1)
+	var color := Color(0.42, 0.78, 1.0, 0.55 + pulse * 0.40)
+	var size: float = _radius * 0.032
+
+	_draw_triangle(
+		_content_to_screen(Vector2(NAV_LIST_CENTER_X, NAV_UP_ARROW_Y) * _radius),
+		size,
+		true,
+		color
+	)
+	_draw_triangle(
+		_content_to_screen(Vector2(NAV_LIST_CENTER_X, NAV_DOWN_ARROW_Y) * _radius),
+		size,
+		false,
+		color
+	)
+
+
+func _draw_triangle(
+	position_value: Vector2,
+	size: float,
+	pointing_up: bool,
+	color: Color
+) -> void:
+	var direction: float = -1.0 if pointing_up else 1.0
+	var points := PackedVector2Array([
+		position_value + Vector2(0.0, size * direction),
+		position_value + Vector2(-size * 1.15, -size * 0.62 * direction),
+		position_value + Vector2(size * 1.15, -size * 0.62 * direction),
+	])
+	draw_colored_polygon(points, color)
+
+	var outline := points.duplicate()
+	outline.append(outline[0])
+	draw_polyline(
+		outline,
+		Color(1.0, 1.0, 1.0, color.a * 0.55),
+		maxf(1.5, size * 0.16),
+		true
+	)
 
 
 func _build_cards(font: Font) -> void:
