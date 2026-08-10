@@ -10,8 +10,10 @@ extends Node
 ##   ArcadeSettings.set_mode(ArcadeSettings.Mode.CREDIT)
 
 signal changed
+signal credit_inserted(total: int)
 
 const SETTINGS_PATH: String = "user://hit_music_arcade_settings.json"
+const CREDIT_INPUT_COOLDOWN_MSEC: int = 140
 
 enum Mode {
 	FREE,
@@ -20,10 +22,26 @@ enum Mode {
 
 var mode: int = Mode.FREE
 var credits: int = 0
+var _last_credit_input_msec: int = -1000
 
 
 func _ready() -> void:
 	load_settings()
+	process_mode = Node.PROCESS_MODE_ALWAYS
+
+
+func _process(_delta: float) -> void:
+	if not InputMap.has_action("input_credito"):
+		return
+	if not Input.is_action_just_pressed("input_credito"):
+		return
+
+	var now_msec: int = Time.get_ticks_msec()
+	if now_msec - _last_credit_input_msec < CREDIT_INPUT_COOLDOWN_MSEC:
+		return
+	_last_credit_input_msec = now_msec
+	add_credit(1)
+	credit_inserted.emit(credits)
 
 
 func load_settings() -> void:
@@ -74,7 +92,7 @@ func toggle_mode() -> void:
 
 
 func add_credit(amount: int = 1) -> void:
-	credits = maxi(0, credits + amount)
+	credits = clampi(credits + amount, 0, 999)
 	save_settings()
 
 

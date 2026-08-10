@@ -18,6 +18,30 @@ var effects: Array = []
 var _hit_energy: float = 0.0
 var _combo_energy: float = 0.0
 
+# Nove ceus reutilizaveis. Os sete cenarios atuais recebem estilos
+# exclusivos; os outros dois ficam prontos para novas musicas.
+const COSMIC_STYLES: Array[String] = [
+	"deep_space",
+	"constellation",
+	"spiral_galaxy",
+	"aurora",
+	"meteor",
+	"planetary",
+	"supernova",
+	"wormhole",
+	"solar_crown",
+]
+const COSMIC_STYLE_BY_SONG: Dictionary = {
+	"carmine": "supernova",
+	"dragon_ball": "solar_crown",
+	"demon": "aurora",
+	"fairy": "constellation",
+	"naruto": "spiral_galaxy",
+	"rick_morty": "wormhole",
+	"soul": "meteor",
+}
+var _cosmic_stars: Array[Vector4] = []
+
 # Feedback colorido por lane na linha de encaixe (o "ring"). Antes a
 # linha e as bolinhas de cada lane eram sempre brancas, sem relacao
 # com o que foi acertado. Agora cada lane guarda uma energia de flash
@@ -73,6 +97,7 @@ func configure(
 	lane_positions = new_lanes
 	song = new_song
 	difficulty = new_difficulty
+	_rebuild_cosmic_cache()
 	queue_redraw()
 
 
@@ -193,6 +218,7 @@ func _draw() -> void:
 		return
 
 	_draw_circle_base()
+	_draw_cosmic_sky()
 	_draw_theme_geometry()
 	_draw_ambient_particles()
 	_draw_inner_technical_rings()
@@ -272,14 +298,150 @@ func _draw_circle_base() -> void:
 	)
 
 
+func _rebuild_cosmic_cache() -> void:
+	_cosmic_stars.clear()
+	var song_seed: float = float(song.get("seed", 1001))
+	for index in range(36):
+		var seed: float = song_seed * 0.017 + float(index) * 12.9898
+		var angle: float = fmod(absf(sin(seed) * 43758.5453), TAU)
+		var radial: float = 0.10 + sqrt(fmod(absf(cos(seed * 0.731)) * 97.17, 0.82)) * 0.82
+		var depth: float = 0.25 + float(index % 4) * 0.22
+		var phase: float = fmod(absf(sin(seed * 1.91) * 173.31), TAU)
+		_cosmic_stars.append(Vector4(angle, minf(radial, 0.94), depth, phase))
+
+
+func _cosmic_style() -> String:
+	var explicit_style: String = str(song.get("cosmic_style", ""))
+	if explicit_style in COSMIC_STYLES:
+		return explicit_style
+	var song_id: String = str(song.get("id", ""))
+	if COSMIC_STYLE_BY_SONG.has(song_id):
+		return str(COSMIC_STYLE_BY_SONG[song_id])
+	var seed: int = absi(int(song.get("seed", 0)))
+	return COSMIC_STYLES[seed % COSMIC_STYLES.size()]
+
+
+func _cosmic_star_position(star: Vector4, time_value: float, speed_scale: float = 1.0) -> Vector2:
+	var direction_sign: float = -1.0 if int(star.w * 10.0) % 2 == 0 else 1.0
+	var angle: float = star.x + time_value * (0.004 + star.z * 0.006) * direction_sign * speed_scale
+	return center + Vector2(cos(angle), sin(angle)) * radius * star.y
+
+
+func _draw_cosmic_sky() -> void:
+	if _cosmic_stars.is_empty():
+		_rebuild_cosmic_cache()
+
+	var time_value: float = _idle_time()
+	var primary: Color = _primary()
+	var secondary: Color = _secondary()
+	var accent: Color = _accent()
+	var reaction: float = clampf(_hit_energy + _combo_energy * 0.28, 0.0, 1.0)
+	var style: String = _cosmic_style()
+
+	# Nebulosas largas, sempre contidas no ceu circular.
+	var nebula_shift: Vector2 = Vector2(cos(time_value * 0.025), sin(time_value * 0.021)) * radius * 0.08
+	_draw_soft_glow(center + nebula_shift + Vector2(-radius * 0.28, radius * 0.10), radius * 0.42, primary, 0.055 + reaction * 0.025, 3)
+	_draw_soft_glow(center - nebula_shift + Vector2(radius * 0.24, -radius * 0.16), radius * 0.34, secondary, 0.040 + reaction * 0.020, 3)
+
+	match style:
+		"constellation":
+			var links: Array[Vector2i] = [
+				Vector2i(1, 5), Vector2i(5, 9), Vector2i(9, 14),
+				Vector2i(14, 18), Vector2i(18, 23), Vector2i(9, 27),
+				Vector2i(27, 31), Vector2i(5, 33),
+			]
+			for link in links:
+				var from: Vector2 = _cosmic_star_position(_cosmic_stars[link.x], time_value)
+				var to: Vector2 = _cosmic_star_position(_cosmic_stars[link.y], time_value)
+				draw_line(from, to, Color(primary.r, primary.g, primary.b, 0.18), maxf(1.0, radius * 0.0018), true)
+
+		"spiral_galaxy":
+			for arm in range(3):
+				var previous: Vector2 = center
+				for step in range(1, 13):
+					var progress: float = float(step) / 12.0
+					var angle: float = time_value * 0.045 + TAU * float(arm) / 3.0 + progress * TAU * 1.38
+					var position_value: Vector2 = center + Vector2(cos(angle), sin(angle)) * radius * progress * 0.78
+					var arm_color: Color = primary.lerp(accent, progress)
+					draw_line(previous, position_value, Color(arm_color.r, arm_color.g, arm_color.b, 0.13), maxf(1.0, radius * 0.0022), true)
+					draw_circle(position_value, maxf(1.0, radius * 0.0035), Color(arm_color.r, arm_color.g, arm_color.b, 0.42), true)
+					previous = position_value
+
+		"aurora":
+			for band in range(4):
+				var points := PackedVector2Array()
+				for step in range(25):
+					var x_ratio: float = -0.78 + 1.56 * float(step) / 24.0
+					var wave: float = sin(x_ratio * 5.2 + time_value * (0.18 + float(band) * 0.025) + float(band))
+					var y_ratio: float = -0.28 + float(band) * 0.16 + wave * 0.075
+					points.append(center + Vector2(x_ratio, y_ratio) * radius)
+				var band_color: Color = primary.lerp(secondary, float(band) / 3.0)
+				draw_polyline(points, Color(band_color.r, band_color.g, band_color.b, 0.14 + float(band) * 0.025), maxf(2.0, radius * 0.004), true)
+
+		"meteor":
+			var meteor_direction := Vector2(-0.88, 0.48).normalized()
+			for index in range(0, _cosmic_stars.size(), 4):
+				var head: Vector2 = _cosmic_star_position(_cosmic_stars[index], time_value, 1.8)
+				var length: float = radius * (0.035 + float(index % 5) * 0.012)
+				draw_line(head - meteor_direction * length, head, Color(accent.r, accent.g, accent.b, 0.34), maxf(1.0, radius * 0.0024), true)
+
+		"planetary":
+			for orbit_index in range(1, 5):
+				var orbit_radius: float = radius * (0.16 + float(orbit_index) * 0.13)
+				draw_arc(center, orbit_radius, 0.0, TAU, 96, Color(primary.r, primary.g, primary.b, 0.08 + float(orbit_index) * 0.012), maxf(1.0, radius * 0.0017), true)
+				var planet_angle: float = time_value * (0.035 / float(orbit_index)) + float(orbit_index) * 1.31
+				var planet_position: Vector2 = center + Vector2(cos(planet_angle), sin(planet_angle)) * orbit_radius
+				draw_circle(planet_position, radius * (0.008 + float(orbit_index) * 0.002), primary.lerp(accent, float(orbit_index) / 5.0), true)
+
+		"supernova":
+			for ray in range(20):
+				var angle: float = TAU * float(ray) / 20.0 + time_value * 0.018
+				var ray_length: float = radius * (0.20 + 0.10 * (0.5 + 0.5 * sin(time_value * 0.8 + float(ray))))
+				var direction := Vector2(cos(angle), sin(angle))
+				draw_line(center + direction * radius * 0.07, center + direction * ray_length, Color(primary.r, primary.g, primary.b, 0.14), maxf(1.0, radius * 0.002), true)
+			_draw_soft_glow(center, radius * 0.18, accent, 0.16 + reaction * 0.10, 3)
+
+		"wormhole":
+			for ring_index in range(1, 11):
+				var progress: float = float(ring_index) / 10.0
+				var wobble: float = sin(time_value * 0.35 + float(ring_index) * 0.71) * radius * 0.018
+				var ring_center: Vector2 = center + Vector2(wobble, -wobble * 0.55)
+				var ring_color: Color = primary.lerp(secondary, progress)
+				draw_arc(ring_center, radius * progress * 0.72, 0.0, TAU, 100, Color(ring_color.r, ring_color.g, ring_color.b, 0.05 + progress * 0.07), maxf(1.0, radius * 0.002), true)
+
+		"solar_crown":
+			var crown_radius: float = radius * (0.22 + _beat_pulse() * 0.012)
+			_draw_soft_glow(center, crown_radius * 1.25, primary, 0.14 + reaction * 0.06, 3)
+			for ray in range(16):
+				var angle: float = TAU * float(ray) / 16.0 - time_value * 0.025
+				var direction := Vector2(cos(angle), sin(angle))
+				draw_line(center + direction * crown_radius, center + direction * crown_radius * 1.34, Color(accent.r, accent.g, accent.b, 0.20), maxf(1.0, radius * 0.0023), true)
+			draw_arc(center, crown_radius, 0.0, TAU, 120, Color(accent.r, accent.g, accent.b, 0.28), maxf(2.0, radius * 0.004), true)
+
+		_:
+			# Deep space: o movimento fica somente na deriva estelar e nas
+			# nebulosas, oferecendo uma tela mais calma para futuras musicas.
+			pass
+
+	# Campo estelar compartilhado: estrelas com tres profundidades,
+	# brilho leve e deriva deterministica (zero RandomNumberGenerator por frame).
+	for star in _cosmic_stars:
+		var position_value: Vector2 = _cosmic_star_position(star, time_value)
+		var twinkle: float = 0.5 + 0.5 * sin(time_value * (0.75 + star.z * 0.9) + star.w)
+		var star_color: Color = primary.lerp(Color.WHITE, 0.45 + star.z * 0.25)
+		var star_size: float = radius * (0.0018 + star.z * 0.0021 + twinkle * 0.0012)
+		draw_circle(position_value, maxf(1.0, star_size), Color(star_color.r, star_color.g, star_color.b, 0.30 + twinkle * 0.62), true)
+		if twinkle > 0.82 and star.z > 0.45:
+			draw_line(position_value - Vector2(star_size * 2.2, 0.0), position_value + Vector2(star_size * 2.2, 0.0), Color(1.0, 1.0, 1.0, 0.18), maxf(1.0, star_size * 0.28), true)
+			draw_line(position_value - Vector2(0.0, star_size * 2.2), position_value + Vector2(0.0, star_size * 2.2), Color(1.0, 1.0, 1.0, 0.18), maxf(1.0, star_size * 0.28), true)
 func _draw_theme_geometry() -> void:
 	var configured_pattern: String = str(
 		song.get("pattern", "diamonds")
 	).to_lower()
 	var intensity: float = clampf(
 		float(difficulty.get("background_intensity", 0.18)),
-		0.08,
-		0.42
+		0.06,
+		0.30
 	)
 	var time_value: float = _idle_time()
 	var speed: float = float(
@@ -294,7 +456,7 @@ func _draw_theme_geometry() -> void:
 
 	# Fundo totalmente geometrico: sem arcos cortados.
 	# Cada camada forma uma mandala completa de cristais.
-	for layer in range(1, 6):
+	for layer in range(1, 5):
 		var layer_radius: float = radius * (
 			0.10 + float(layer) * 0.115
 		)
@@ -507,7 +669,7 @@ func _draw_ambient_particles() -> void:
 	var time_value: float = _idle_time()
 	var beat: float = _beat_pulse()
 	var palette: Array[Color] = [_primary(), _secondary(), _accent()]
-	for index in range(28):
+	for index in range(18):
 		var seed: float = float(index) * 12.9898
 		var depth: float = 0.35 + float(index % 3) * 0.27
 		var base_angle: float = fmod(absf(sin(seed) * 43758.5453), TAU)

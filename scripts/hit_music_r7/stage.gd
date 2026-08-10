@@ -109,6 +109,7 @@ var _mouse_down: bool = false
 var _mouse_position: Vector2 = Vector2.ZERO
 var _pointer_active: bool = false
 var _pointer_position: Vector2 = Vector2.ZERO
+var _physical_lane_down: Array[bool] = []
 
 
 func _song_id() -> String:
@@ -117,7 +118,12 @@ func _song_id() -> String:
 
 func _ready() -> void:
 	Engine.max_fps = 60
+	# Entrega eventos de controle imediatamente. O polling abaixo continua
+	# como rede de seguranca para bridges que atualizam o estado entre frames.
+	Input.use_accumulated_input = false
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	_physical_lane_down.resize(NUM_LANES)
+	_physical_lane_down.fill(false)
 
 	_song = CATALOG.get_song(_song_id())
 	if _song.is_empty():
@@ -632,9 +638,12 @@ func _process_physical_inputs() -> void:
 		var action: String = INPUT_ACTIONS[lane]
 		if not InputMap.has_action(action):
 			continue
-		if Input.is_action_just_pressed(action):
+		var pressed: bool = Input.is_action_pressed(action)
+		if pressed and not _physical_lane_down[lane]:
+			_physical_lane_down[lane] = true
 			_handle_lane_press(lane, "lane_%d" % lane)
-		if Input.is_action_just_released(action):
+		elif not pressed and _physical_lane_down[lane]:
+			_physical_lane_down[lane] = false
 			_handle_lane_release(lane, "lane_%d" % lane)
 
 
@@ -648,6 +657,23 @@ func _input(event: InputEvent) -> void:
 
 	if _state != GameState.PLAYING:
 		return
+
+	# Processa a borda do botao no proprio evento, antes do proximo frame.
+	# O estado compartilhado impede que o polling em _process() duplique o hit.
+	for lane in range(INPUT_ACTIONS.size()):
+		var action: String = INPUT_ACTIONS[lane]
+		if not InputMap.has_action(action):
+			continue
+		if event.is_action_pressed(action):
+			if not _physical_lane_down[lane]:
+				_physical_lane_down[lane] = true
+				_handle_lane_press(lane, "lane_%d" % lane)
+			return
+		if event.is_action_released(action):
+			if _physical_lane_down[lane]:
+				_physical_lane_down[lane] = false
+				_handle_lane_release(lane, "lane_%d" % lane)
+			return
 
 	if event is InputEventScreenTouch:
 		var touch: InputEventScreenTouch = event

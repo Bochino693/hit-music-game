@@ -3,7 +3,8 @@ extends RefCounted
 ## menus (abertura, seletor de musica, tela de escolha de dificuldade
 ## antes de confirmar) — nunca durante uma partida em andamento, pra
 ## nao interromper musica/LEDs no meio do jogo. Cada tela que aceita
-## F9 chama try_open_from_keyboard() no comeco do seu _input().
+## F9 chama try_open_from_keyboard() no comeco do seu _input(). O
+## botao fisico SELECT chama try_open_from_action() no _process().
 
 const CONFIG_SCENE_PATH: String = "res://scenes/config.tscn"
 const RETURN_META_KEY: String = "hit_music_settings_return"
@@ -19,6 +20,18 @@ static func try_open_from_keyboard(event: InputEvent) -> bool:
 	):
 		return false
 
+	return open_settings()
+
+
+static func try_open_from_action() -> bool:
+	if not InputMap.has_action("input_select"):
+		return false
+	if not Input.is_action_just_pressed("input_select"):
+		return false
+	return open_settings()
+
+
+static func open_settings() -> bool:
 	var main_loop: Variant = Engine.get_main_loop()
 	if not main_loop is SceneTree:
 		return false

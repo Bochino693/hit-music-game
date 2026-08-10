@@ -364,6 +364,9 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	if not _ja_iniciando and SETTINGS_GATE.try_open_from_action():
+		return
+
 	var cliente_serial := get_node_or_null("/root/LedClient")
 	if cliente_serial != null and cliente_serial.has_method("tick"):
 		cliente_serial.call("tick")

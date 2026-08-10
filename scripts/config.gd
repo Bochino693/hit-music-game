@@ -26,8 +26,16 @@ var _cursor: int = 0
 var _in_test_view: bool = false
 
 var _hud_layer: CanvasLayer
+var _top_panel: Panel
+var _top_status_label: Label
 var _panel: Panel
 var _menu_labels: Array[Label] = []
+var _menu_rows: Array[Panel] = []
+
+var _screen: Vector2 = Vector2.ZERO
+var _center: Vector2 = Vector2.ZERO
+var _radius: float = 100.0
+var _select_can_close: bool = false
 
 var _test_layer: CanvasLayer
 var _test_status_label: Label
@@ -47,13 +55,26 @@ func _ready() -> void:
 		client.call("begin_menu")
 
 	var screen: Vector2 = get_viewport_rect().size
+	_calculate_machine_geometry(screen)
 	_build_background(screen)
 	_build_menu(screen)
 	_build_test_view(screen)
 	_refresh_menu_texts()
+	ArcadeSettings.changed.connect(_refresh_menu_texts)
+	get_viewport().size_changed.connect(_reload_for_resize)
 
 
 func _process(_delta: float) -> void:
+	queue_redraw()
+	# Ao entrar por SELECT, espera o botao ser solto antes de permitir
+	# que um novo toque feche a tela. Evita abrir e fechar no mesmo frame.
+	if InputMap.has_action("input_select"):
+		if not Input.is_action_pressed("input_select"):
+			_select_can_close = true
+		elif _select_can_close and Input.is_action_just_pressed("input_select"):
+			_close_settings()
+			return
+
 	if _in_test_view:
 		_update_test_view()
 		return
@@ -67,6 +88,14 @@ func _process_physical_inputs() -> void:
 		_activate_cursor()
 	if Input.is_action_just_pressed("input_start"):
 		_close_settings()
+
+
+func _reload_for_resize() -> void:
+	call_deferred("_reload_current_scene")
+
+
+func _reload_current_scene() -> void:
+	get_tree().reload_current_scene()
 
 
 func _input(event: InputEvent) -> void:
@@ -162,23 +191,57 @@ func _refresh_menu_texts() -> void:
 		"PORTA: COM5 (FORÇADA)" if not forced.is_empty() else "PORTA: AUTOMÁTICA"
 	)
 	_menu_labels[MenuItem.BACK].text = "VOLTAR"
+	if _top_status_label != null:
+		_top_status_label.text = (
+			"MODO CRÉDITO  •  %02d CRÉDITOS" % ArcadeSettings.credits
+			if ArcadeSettings.is_credit_mode()
+			else "MODO LIVRE  •  START LIBERADO"
+		)
 
 	for i in range(_menu_labels.size()):
 		var label: Label = _menu_labels[i]
 		if i == _cursor:
-			label.text = "> " + label.text
 			label.add_theme_color_override("font_color", Color(1.0, 0.86, 0.20, 1.0))
 		else:
 			label.add_theme_color_override("font_color", Color.WHITE)
+		if i < _menu_rows.size():
+			_menu_rows[i].add_theme_stylebox_override("panel", _row_style(i == _cursor))
 
 
 func _build_background(screen: Vector2) -> void:
-	var background := ColorRect.new()
-	background.color = Color(0.01, 0.015, 0.03, 1.0)
-	background.size = screen
-	background.position = Vector2.ZERO
-	background.z_index = -10
-	add_child(background)
+	_screen = screen
+	queue_redraw()
+
+
+func _calculate_machine_geometry(screen: Vector2) -> void:
+	var margin: float = maxf(4.0, screen.x * 0.022)
+	var top_height: float = screen.y * 0.205
+	var top_reserved: float = margin + top_height + screen.y * 0.024
+	var bottom_margin: float = maxf(4.0, screen.y * 0.012)
+	_radius = minf(
+		(screen.x - margin * 2.0) * 0.5,
+		(screen.y - top_reserved - bottom_margin) * 0.5
+	) * 0.985
+	_center = Vector2(screen.x * 0.5, screen.y - bottom_margin - _radius)
+
+
+func _draw() -> void:
+	draw_rect(Rect2(Vector2.ZERO, _screen), Color(0.001, 0.003, 0.010, 1.0), true)
+	draw_circle(_center, _radius * 1.012, Color(0.04, 0.48, 0.72, 0.20), true)
+	draw_circle(_center, _radius, Color(0.004, 0.010, 0.028, 1.0), true)
+
+	var now: float = float(Time.get_ticks_msec()) / 1000.0
+	for index in range(34):
+		var seed: float = float(index) * 17.173
+		var angle: float = fmod(absf(sin(seed) * 931.77), TAU) + now * (0.006 + float(index % 3) * 0.004)
+		var orbit: float = _radius * (0.12 + fmod(absf(cos(seed * 0.73)) * 7.31, 0.78))
+		var sparkle: float = 0.5 + 0.5 * sin(now * (1.1 + float(index % 4) * 0.21) + seed)
+		var position_value: Vector2 = _center + Vector2(cos(angle), sin(angle)) * orbit
+		var color: Color = Color(0.32, 0.82, 1.0) if index % 3 != 0 else Color(0.86, 0.44, 1.0)
+		draw_circle(position_value, maxf(1.0, _radius * (0.0022 + sparkle * 0.0018)), Color(color.r, color.g, color.b, 0.28 + sparkle * 0.55), true)
+
+	draw_arc(_center, _radius * 0.985, 0.0, TAU, 220, Color(0.20, 0.86, 1.0, 0.55), maxf(3.0, _radius * 0.008), true)
+	draw_arc(_center, _radius * 0.955, 0.0, TAU, 220, Color(0.82, 0.28, 1.0, 0.22), maxf(1.0, _radius * 0.0025), true)
 
 
 func _build_menu(screen: Vector2) -> void:
@@ -187,47 +250,81 @@ func _build_menu(screen: Vector2) -> void:
 	add_child(_hud_layer)
 
 	var font: Font = _load_font()
-	var panel_size := Vector2(screen.x * 0.48, screen.y * 0.62)
+	var margin: float = screen.x * 0.022
+	var top_height: float = screen.y * 0.205
+
+	_top_panel = Panel.new()
+	_top_panel.position = Vector2(margin, margin)
+	_top_panel.size = Vector2(screen.x - margin * 2.0, top_height)
+	_top_panel.add_theme_stylebox_override("panel", _top_panel_style())
+	_hud_layer.add_child(_top_panel)
+
+	var top_title: Label = _make_label("CONFIGURAÇÕES DA MÁQUINA", int(top_height * 0.22), HORIZONTAL_ALIGNMENT_LEFT, font)
+	top_title.position = Vector2(top_height * 0.13, top_height * 0.08)
+	top_title.size = Vector2(_top_panel.size.x * 0.58, top_height * 0.34)
+	top_title.add_theme_color_override("font_color", Color(0.18, 0.88, 1.0, 1.0))
+	_top_panel.add_child(top_title)
+
+	var top_hint: Label = _make_label("SELECT / F9 PARA FECHAR  •  PAINEL DO OPERADOR", int(top_height * 0.10), HORIZONTAL_ALIGNMENT_LEFT, font)
+	top_hint.position = Vector2(top_height * 0.14, top_height * 0.47)
+	top_hint.size = Vector2(_top_panel.size.x * 0.58, top_height * 0.24)
+	top_hint.add_theme_color_override("font_color", Color(0.68, 0.75, 0.88, 1.0))
+	_top_panel.add_child(top_hint)
+
+	_top_status_label = _make_label("", int(top_height * 0.13), HORIZONTAL_ALIGNMENT_CENTER, font)
+	_top_status_label.position = Vector2(_top_panel.size.x * 0.66, top_height * 0.20)
+	_top_status_label.size = Vector2(_top_panel.size.x * 0.30, top_height * 0.45)
+	_top_status_label.add_theme_color_override("font_color", Color(1.0, 0.84, 0.24, 1.0))
+	_top_panel.add_child(_top_status_label)
+
+	var panel_size := Vector2(_radius * 1.58, _radius * 1.58)
 
 	_panel = Panel.new()
-	_panel.position = (screen - panel_size) * 0.5
+	_panel.position = _center - panel_size * 0.5
 	_panel.size = panel_size
 	_panel.add_theme_stylebox_override("panel", _panel_style())
 	_hud_layer.add_child(_panel)
 
 	var title: Label = _make_label(
 		"CONFIGURAÇÕES",
-		int(panel_size.x * 0.075),
+		int(_radius * 0.075),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
-	title.position = Vector2(panel_size.x * 0.06, panel_size.y * 0.05)
-	title.size = Vector2(panel_size.x * 0.88, panel_size.y * 0.10)
+	title.position = Vector2(panel_size.x * 0.08, panel_size.y * 0.055)
+	title.size = Vector2(panel_size.x * 0.84, panel_size.y * 0.12)
 	title.add_theme_color_override("font_color", Color(0.10, 0.85, 1.0, 1.0))
 	_panel.add_child(title)
 
-	var start_y: float = panel_size.y * 0.22
-	var row_height: float = panel_size.y * 0.13
+	var start_y: float = panel_size.y * 0.225
+	var row_height: float = panel_size.y * 0.115
 	for i in range(5):
+		var row := Panel.new()
+		row.position = Vector2(panel_size.x * 0.14, start_y + row_height * float(i))
+		row.size = Vector2(panel_size.x * 0.72, row_height * 0.78)
+		row.add_theme_stylebox_override("panel", _row_style(false))
+		_panel.add_child(row)
+		_menu_rows.append(row)
+
 		var label: Label = _make_label(
 			"",
-			int(panel_size.x * 0.045),
+			int(_radius * 0.044),
 			HORIZONTAL_ALIGNMENT_CENTER,
 			font
 		)
-		label.position = Vector2(panel_size.x * 0.06, start_y + row_height * float(i))
-		label.size = Vector2(panel_size.x * 0.88, row_height * 0.86)
-		_panel.add_child(label)
+		label.size = row.size
+		label.clip_text = true
+		row.add_child(label)
 		_menu_labels.append(label)
 
 	var hint: Label = _make_label(
-		"A: NAVEGAR    B: CONFIRMAR    F9/ESC: FECHAR",
-		int(panel_size.x * 0.030),
+		"A: NAVEGAR    B: CONFIRMAR    SELECT: VOLTAR",
+		int(_radius * 0.026),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
-	hint.position = Vector2(panel_size.x * 0.06, panel_size.y * 0.90)
-	hint.size = Vector2(panel_size.x * 0.88, panel_size.y * 0.08)
+	hint.position = Vector2(panel_size.x * 0.10, panel_size.y * 0.84)
+	hint.size = Vector2(panel_size.x * 0.80, panel_size.y * 0.08)
 	hint.add_theme_color_override("font_color", Color(0.60, 0.66, 0.78, 1.0))
 	_panel.add_child(hint)
 
@@ -322,47 +419,42 @@ func _build_test_view(screen: Vector2) -> void:
 
 	var font: Font = _load_font()
 
-	var background := ColorRect.new()
-	background.color = Color(0.006, 0.010, 0.022, 0.98)
-	background.size = screen
-	background.position = Vector2.ZERO
-	_test_layer.add_child(background)
+	var margin: float = screen.x * 0.022
+	var top_height: float = screen.y * 0.205
+	var test_top := Panel.new()
+	test_top.position = Vector2(margin, margin)
+	test_top.size = Vector2(screen.x - margin * 2.0, top_height)
+	test_top.add_theme_stylebox_override("panel", _top_panel_style())
+	_test_layer.add_child(test_top)
 
 	var title: Label = _make_label(
 		"TESTE DE LEDS E INPUTS",
-		int(screen.x * 0.032),
+		int(top_height * 0.22),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
-	title.position = Vector2(screen.x * 0.05, screen.y * 0.06)
-	title.size = Vector2(screen.x * 0.90, screen.y * 0.08)
+	title.position = Vector2(top_height * 0.13, top_height * 0.08)
+	title.size = Vector2(test_top.size.x * 0.55, top_height * 0.34)
 	title.add_theme_color_override("font_color", Color(0.10, 0.85, 1.0, 1.0))
-	_test_layer.add_child(title)
+	test_top.add_child(title)
 
 	_test_status_label = _make_label(
 		"",
-		int(screen.x * 0.022),
+		int(top_height * 0.12),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
-	_test_status_label.position = Vector2(screen.x * 0.05, screen.y * 0.15)
-	_test_status_label.size = Vector2(screen.x * 0.90, screen.y * 0.05)
-	_test_layer.add_child(_test_status_label)
+	_test_status_label.position = Vector2(test_top.size.x * 0.52, top_height * 0.20)
+	_test_status_label.size = Vector2(test_top.size.x * 0.44, top_height * 0.40)
+	test_top.add_child(_test_status_label)
 
-	var grid_top: float = screen.y * 0.26
-	var box_size := Vector2(screen.x * 0.15, screen.y * 0.15)
-	var spacing_x: float = screen.x * 0.19
-	var spacing_y: float = screen.y * 0.20
-	var start_x: float = screen.x * 0.5 - spacing_x * 1.5
+	var box_size := Vector2.ONE * (_radius * 0.23)
+	var lane_orbit: float = _radius * 0.60
 
 	for i in range(LANE_COUNT):
-		var col: int = i % 4
-		var row: int = int(i / 4)
+		var angle: float = -PI * 0.5 + TAU * float(i) / float(LANE_COUNT)
 		var box := Panel.new()
-		box.position = Vector2(
-			start_x + spacing_x * float(col) - box_size.x * 0.5,
-			grid_top + spacing_y * float(row)
-		)
+		box.position = _center + Vector2(cos(angle), sin(angle)) * lane_orbit - box_size * 0.5
 		box.size = box_size
 		box.add_theme_stylebox_override("panel", _box_style(false))
 		_test_layer.add_child(box)
@@ -379,11 +471,8 @@ func _build_test_view(screen: Vector2) -> void:
 		box.add_child(label)
 
 	_start_box = Panel.new()
-	_start_box.size = box_size * 1.15
-	_start_box.position = Vector2(
-		screen.x * 0.5 - _start_box.size.x * 0.5,
-		grid_top + spacing_y * 2.35
-	)
+	_start_box.size = box_size * 1.35
+	_start_box.position = _center - _start_box.size * 0.5
 	_start_box.add_theme_stylebox_override("panel", _box_style(false))
 	_test_layer.add_child(_start_box)
 
@@ -397,13 +486,13 @@ func _build_test_view(screen: Vector2) -> void:
 	_start_box.add_child(start_label)
 
 	var hint: Label = _make_label(
-		"APERTE OS BOTÕES FÍSICOS PRA TESTAR   —   F9/ESC: VOLTAR",
-		int(screen.x * 0.020),
+		"APERTE OS BOTÕES FÍSICOS   •   SELECT / F9: VOLTAR",
+		int(_radius * 0.027),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
-	hint.position = Vector2(screen.x * 0.05, screen.y * 0.90)
-	hint.size = Vector2(screen.x * 0.90, screen.y * 0.06)
+	hint.position = Vector2(_center.x - _radius * 0.68, _center.y + _radius * 0.76)
+	hint.size = Vector2(_radius * 1.36, _radius * 0.10)
 	hint.add_theme_color_override("font_color", Color(0.60, 0.66, 0.78, 1.0))
 	_test_layer.add_child(hint)
 
@@ -442,9 +531,32 @@ func _panel_style() -> StyleBoxFlat:
 	style.bg_color = Color(0.006, 0.010, 0.024, 0.97)
 	style.border_color = Color(0.10, 0.85, 1.0, 0.65)
 	style.set_border_width_all(3)
-	style.set_corner_radius_all(24)
+	style.set_corner_radius_all(999)
 	style.shadow_color = Color(0.10, 0.85, 1.0, 0.20)
 	style.shadow_size = 14
+	return style
+
+
+func _top_panel_style() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.006, 0.014, 0.038, 0.97)
+	style.border_color = Color(0.16, 0.84, 1.0, 0.72)
+	style.set_border_width_all(3)
+	style.set_corner_radius_all(30)
+	style.shadow_color = Color(0.10, 0.72, 1.0, 0.24)
+	style.shadow_size = 16
+	return style
+
+
+func _row_style(selected: bool) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.10, 0.07, 0.015, 0.92) if selected else Color(0.012, 0.028, 0.065, 0.88)
+	style.border_color = Color(1.0, 0.82, 0.20, 0.90) if selected else Color(0.24, 0.62, 0.90, 0.38)
+	style.set_border_width_all(2 if selected else 1)
+	style.set_corner_radius_all(999)
+	if selected:
+		style.shadow_color = Color(1.0, 0.70, 0.10, 0.22)
+		style.shadow_size = 10
 	return style
 
 

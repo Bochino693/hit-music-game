@@ -47,6 +47,7 @@ var _category_label: Label
 var _bpm_label: Label
 var _mode_label: Label
 var _record_label: Label
+var _hard_record_label: Label
 var _start_panel: Panel
 var _start_label: Label
 var _cards: Array[Panel] = []
@@ -327,7 +328,7 @@ func _build_scene() -> void:
 	_hard_chip.add_child(_hard_label)
 
 	_instruction_label = _make_label(
-		"A  NEXT TRACK     B  DIFFICULTY     START  PLAY",
+		"A  PRÓXIMA     D  ANTERIOR     B / START  JOGAR",
 		int(top_height * 0.10),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
@@ -335,6 +336,8 @@ func _build_scene() -> void:
 	_instruction_label.position = Vector2(top_height * 0.10, top_height * 0.65)
 	_instruction_label.size = Vector2(_top_panel.size.x - top_height * 0.20, top_height * 0.22)
 	_instruction_label.add_theme_color_override("font_color", Color(0.78, 0.83, 0.93, 1.0))
+	_instruction_label.clip_text = true
+	_fit_label_to_width(_instruction_label, _instruction_label.size.x, int(top_height * 0.10), int(top_height * 0.07))
 	_top_panel.add_child(_instruction_label)
 
 	_content_root = Control.new()
@@ -362,15 +365,11 @@ func _build_scene() -> void:
 ## x 0.19R..0.97R (centro 0.58R) e o painel de info x 1.03R..1.78R.
 const NAV_LIST_CENTER_X: float = 0.58
 const NAV_UP_CHIP_Y: float = 0.335
-const NAV_DOWN_CHIP_Y: float = 1.575
+const NAV_DOWN_CHIP_Y: float = 1.485
 const NAV_UP_ARROW_Y: float = 0.235
-const NAV_DOWN_ARROW_Y: float = 1.675
-const NAV_START_CENTER: Vector2 = Vector2(1.405, 1.66)
-
-
-## Dicas de navegacao com a acao escrita ("SUBIR", "DESCER",
-## "START") em vez da letra do botao — quem joga nao sabe o que e
-## "A" ou "D". Cada chip fica junto do botao fisico correspondente.
+const NAV_DOWN_ARROW_Y: float = 1.545
+## Dicas de navegacao com a acao escrita em vez da letra do botao —
+## quem joga nao precisa conhecer o mapeamento A/D do gabinete.
 func _build_nav_hints(font: Font) -> void:
 	var hints := [
 		{
@@ -385,12 +384,8 @@ func _build_nav_hints(font: Font) -> void:
 			"size": Vector2(0.30, 0.082),
 			"accent": false,
 		},
-		{
-			"text": "START",
-			"center": NAV_START_CENTER,
-			"size": Vector2(0.34, 0.098),
-			"accent": true,
-		},
+		# O START real fica abaixo da playlist. Mantemos uma unica leitura
+		# visual, alinhada ao botao fisico, sem duplicar a acao no painel.
 	]
 
 	for hint_value in hints:
@@ -596,7 +591,8 @@ func _build_info_panel(font: Font) -> void:
 	)
 	_song_name.position = Vector2(_info_panel.size.x * 0.06, _info_panel.size.y * 0.51)
 	_song_name.size = Vector2(_info_panel.size.x * 0.88, _info_panel.size.y * 0.16)
-	_song_name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_song_name.autowrap_mode = TextServer.AUTOWRAP_OFF
+	_song_name.clip_text = true
 	_info_panel.add_child(_song_name)
 
 	_category_label = _make_label(
@@ -608,6 +604,7 @@ func _build_info_panel(font: Font) -> void:
 	_category_label.position = Vector2(_info_panel.size.x * 0.06, _info_panel.size.y * 0.675)
 	_category_label.size = Vector2(_info_panel.size.x * 0.88, _info_panel.size.y * 0.055)
 	_category_label.add_theme_color_override("font_color", Color(0.70, 0.76, 0.86, 1.0))
+	_category_label.clip_text = true
 	_info_panel.add_child(_category_label)
 
 	_bpm_label = _make_label(
@@ -618,6 +615,7 @@ func _build_info_panel(font: Font) -> void:
 	)
 	_bpm_label.position = Vector2(_info_panel.size.x * 0.06, _info_panel.size.y * 0.735)
 	_bpm_label.size = Vector2(_info_panel.size.x * 0.43, _info_panel.size.y * 0.055)
+	_bpm_label.clip_text = true
 	_info_panel.add_child(_bpm_label)
 
 	_mode_label = _make_label(
@@ -628,30 +626,44 @@ func _build_info_panel(font: Font) -> void:
 	)
 	_mode_label.position = Vector2(_info_panel.size.x * 0.48, _info_panel.size.y * 0.735)
 	_mode_label.size = Vector2(_info_panel.size.x * 0.46, _info_panel.size.y * 0.055)
+	_mode_label.clip_text = true
 	_info_panel.add_child(_mode_label)
 
 	_record_label = _make_label(
-		"BEST 0.00%",
-		int(_radius * 0.026),
+		"RECORDE FÁCIL  0.00%",
+		int(_radius * 0.022),
 		HORIZONTAL_ALIGNMENT_LEFT,
 		font
 	)
-	_record_label.position = Vector2(_info_panel.size.x * 0.06, _info_panel.size.y * 0.80)
-	_record_label.size = Vector2(_info_panel.size.x * 0.88, _info_panel.size.y * 0.07)
+	_record_label.position = Vector2(_info_panel.size.x * 0.06, _info_panel.size.y * 0.795)
+	_record_label.size = Vector2(_info_panel.size.x * 0.88, _info_panel.size.y * 0.052)
+	_record_label.clip_text = true
 	_info_panel.add_child(_record_label)
 
+	_hard_record_label = _make_label(
+		"RECORDE DIFÍCIL  0.00%",
+		int(_radius * 0.022),
+		HORIZONTAL_ALIGNMENT_LEFT,
+		font
+	)
+	_hard_record_label.position = Vector2(_info_panel.size.x * 0.06, _info_panel.size.y * 0.848)
+	_hard_record_label.size = Vector2(_info_panel.size.x * 0.88, _info_panel.size.y * 0.052)
+	_hard_record_label.clip_text = true
+	_info_panel.add_child(_hard_record_label)
+
 	_start_panel = Panel.new()
-	_start_panel.position = Vector2(_info_panel.size.x * 0.055, _info_panel.size.y * 0.89)
-	_start_panel.size = Vector2(_info_panel.size.x * 0.89, _info_panel.size.y * 0.075)
-	_info_panel.add_child(_start_panel)
+	_start_panel.position = Vector2(_radius * 0.19, _radius * 1.585)
+	_start_panel.size = Vector2(_radius * 0.78, _radius * 0.105)
+	_content_root.add_child(_start_panel)
 
 	_start_label = _make_label(
-		"PRESS START",
+		"START  •  JOGAR",
 		int(_radius * 0.028),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
 	_start_label.size = _start_panel.size
+	_start_label.clip_text = true
 	_start_panel.add_child(_start_label)
 
 
@@ -675,8 +687,13 @@ func _apply_selection(immediate: bool) -> void:
 	_category_label.text = "ANIME / RHYTHM"
 	_bpm_label.text = "BPM %d" % int(round(float(song.get("bpm", 120.0))))
 	_mode_label.text = "MODE " + ("DIFICIL" if _difficulty == "hard" else "FACIL")
-	_record_label.text = "BEST " + _best_record(song)
+	_record_label.text = "RECORDE FÁCIL   " + _best_record(song, "easy")
+	_hard_record_label.text = "RECORDE DIFÍCIL   " + _best_record(song, "hard")
 	_cover.texture = _load_texture(str(song.get("cover", "")))
+	_fit_label_to_width(_song_name, _song_name.size.x, int(_radius * 0.046), int(_radius * 0.022))
+	_fit_label_to_width(_category_label, _category_label.size.x, int(_radius * 0.022), int(_radius * 0.015))
+	_fit_label_to_width(_record_label, _record_label.size.x, int(_radius * 0.022), int(_radius * 0.015))
+	_fit_label_to_width(_hard_record_label, _hard_record_label.size.x, int(_radius * 0.022), int(_radius * 0.015))
 
 	_load_preview(song)
 	_update_cards(immediate)
@@ -785,6 +802,7 @@ func _update_live_styles() -> void:
 	_bpm_label.add_theme_color_override("font_color", primary)
 	_mode_label.add_theme_color_override("font_color", accent)
 	_record_label.add_theme_color_override("font_color", Color.WHITE)
+	_hard_record_label.add_theme_color_override("font_color", accent.lerp(Color.WHITE, 0.35))
 	_start_label.add_theme_color_override("font_color", Color.WHITE)
 
 
@@ -849,7 +867,7 @@ func _start_selected() -> void:
 	)
 
 
-func _best_record(song: Dictionary) -> String:
+func _best_record(song: Dictionary, difficulty_name: String) -> String:
 	var path: String = "user://hit_music_records.json"
 	if not FileAccess.file_exists(path):
 		return "0.00%"
@@ -868,7 +886,7 @@ func _best_record(song: Dictionary) -> String:
 		return "0.00%"
 
 	var record: Dictionary = value as Dictionary
-	var key: String = "dificil" if _difficulty == "hard" else "facil"
+	var key: String = "dificil" if difficulty_name == "hard" else "facil"
 	return "%.2f%%" % float(record.get(key, 0.0))
 
 

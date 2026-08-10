@@ -26,6 +26,12 @@ func _ready() -> void:
 	_refresh_menu_leds_v11()
 
 
+func _process(delta: float) -> void:
+	if not _transitioning and SETTINGS_GATE.try_open_from_action():
+		return
+	super._process(delta)
+
+
 func _refresh_menu_leds_v11() -> void:
 	_refresh_selector_leds()
 

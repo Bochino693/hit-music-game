@@ -65,6 +65,8 @@ func _fade_in_difficulty_panel() -> void:
 
 func _process(delta: float) -> void:
 	if _state == GameState.PRESENTATION and not _difficulty_confirmed:
+		if SETTINGS_GATE.try_open_from_action():
+			return
 		_process_pre_game_inputs()
 		_update_pre_game_styles()
 		_renderer.set_runtime(
