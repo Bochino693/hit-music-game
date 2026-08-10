@@ -19,6 +19,7 @@ var effects: Array = []
 var _hit_energy: float = 0.0
 var _combo_energy: float = 0.0
 var _hit_color: Color = Color.WHITE
+var _hit_color_energy: float = 0.0
 
 # Nove ceus reutilizaveis. Os sete cenarios atuais recebem estilos
 # exclusivos; os outros dois ficam prontos para novas musicas.
@@ -145,6 +146,9 @@ func register_hit(quality: float, combo: int, color: Color = Color.WHITE) -> voi
 	_hit_energy = minf(1.0, _hit_energy + (0.30 + quality * 0.30) * carmine_boost)
 	_combo_energy = clampf(float(combo) / 40.0, 0.0, 1.0)
 	_hit_color = color
+	# Mantem a identidade da cor durante todo o efeito visual. A energia
+	# mecanica decai rapido; esta memoria cromatica dura o burst completo.
+	_hit_color_energy = 1.0
 	queue_redraw()
 
 
@@ -192,6 +196,7 @@ func _nearest_lane_index(position_value: Vector2) -> int:
 func _process(delta: float) -> void:
 	_hit_energy = move_toward(_hit_energy, 0.0, delta * 2.65)
 	_combo_energy = move_toward(_combo_energy, 0.0, delta * 0.16)
+	_hit_color_energy = move_toward(_hit_color_energy, 0.0, delta * 1.10)
 
 	var lane_flash_active: bool = false
 	for lane in range(_lane_flash_energy.size()):
@@ -460,6 +465,13 @@ func _draw_theme_geometry() -> void:
 	var primary: Color = _primary()
 	var secondary: Color = _secondary()
 	var accent: Color = _accent()
+	# Esta e a mandala principal de cristais. Enquanto o burst esta vivo,
+	# todas as camadas usam a cor exata do tazo; somente no final ocorre
+	# uma volta curta e suave para a paleta do cenario.
+	var hit_color_mix: float = clampf(_hit_color_energy * 4.0, 0.0, 1.0)
+	primary = primary.lerp(_hit_color, hit_color_mix)
+	secondary = secondary.lerp(_hit_color, hit_color_mix)
+	accent = accent.lerp(_hit_color, hit_color_mix)
 
 	# Fundo totalmente geometrico: sem arcos cortados.
 	# Cada camada forma uma mandala completa de cristais.
@@ -834,17 +846,17 @@ func _draw_inner_technical_rings() -> void:
 	var primary: Color = _primary()
 	var accent: Color = _accent()
 	var reaction: float = _hit_energy + _combo_energy * 0.34
-	var hit_mix: float = clampf(_hit_energy * 1.55, 0.0, 1.0)
+	var hit_mix: float = clampf(_hit_color_energy * 4.0, 0.0, 1.0)
 	var reactive_primary: Color = primary.lerp(_hit_color, hit_mix)
-	var reactive_accent: Color = accent.lerp(_hit_color, hit_mix * 0.90)
+	var reactive_accent: Color = accent.lerp(_hit_color, hit_mix)
 	var carmine_factor: float = 1.30 if str(song.get("id", "")) == "carmine" else 1.0
 	reaction *= carmine_factor
-	if _hit_energy > 0.015:
+	if _hit_color_energy > 0.015:
 		_draw_soft_glow(
 			center,
-			radius * (0.31 + _hit_energy * 0.16),
+			radius * (0.31 + _hit_color_energy * 0.16),
 			_hit_color,
-			_hit_energy * 0.24,
+			_hit_color_energy * 0.24,
 			3
 		)
 

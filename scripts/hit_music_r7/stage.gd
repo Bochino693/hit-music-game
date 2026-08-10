@@ -75,6 +75,7 @@ var _result_score_percent: float = 0.0
 var _result_transitioning: bool = false
 var _song_audio_started: bool = false
 var _song_finish_requested: bool = false
+var _best_score: float = 0.0
 
 var _center: Vector2 = Vector2.ZERO
 var _radius: float = 100.0
@@ -94,6 +95,7 @@ var _label_score: Label
 var _label_combo: Label
 var _label_performance: Label
 var _label_time: Label
+var _label_best: Label
 var _progress_bar: ProgressBar
 var _countdown_label: Label
 var _result_panel: Panel
@@ -146,6 +148,7 @@ func _ready() -> void:
 	if _difficulty.is_empty():
 		push_error("Difficulty not found for song: " + _song_id())
 		return
+	_best_score = _read_best_score()
 
 	_calculate_geometry()
 	_build_scene()
@@ -316,7 +319,16 @@ func _build_hud() -> void:
 	)
 	_label_title.position = Vector2(inner_margin, height * 0.10)
 	_label_title.size = Vector2(title_width, height * 0.34)
+	_label_title.autowrap_mode = TextServer.AUTOWRAP_OFF
+	_label_title.clip_text = true
+	_label_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_top_panel.add_child(_label_title)
+	_fit_label_to_width(
+		_label_title,
+		title_width,
+		int(height * 0.24),
+		int(height * 0.13)
+	)
 
 	_label_difficulty = _make_label(
 		"DIFICIL" if _difficulty_name == "hard" else "FACIL",
@@ -351,6 +363,21 @@ func _build_hud() -> void:
 	_label_performance.add_theme_color_override("font_color", _primary_color())
 	_top_panel.add_child(_label_performance)
 
+	# O lado direito fica livre na versao final do HUD. BEST permanece
+	# visivel em apresentacao, gameplay e resultado, sem disputar espaco
+	# com o titulo da musica.
+	_label_best = _make_label(
+		"BEST  %.2f%%" % _best_score,
+		int(height * 0.20),
+		HORIZONTAL_ALIGNMENT_RIGHT,
+		font
+	)
+	_label_best.position = Vector2(right_x, height * 0.35)
+	_label_best.size = Vector2(_top_panel.size.x - right_x - inner_margin, height * 0.30)
+	_label_best.clip_text = true
+	_label_best.add_theme_color_override("font_color", _accent_color())
+	_top_panel.add_child(_label_best)
+
 	_progress_bar = ProgressBar.new()
 	_progress_bar.min_value = 0.0
 	_progress_bar.max_value = 1.0
@@ -375,9 +402,7 @@ func _build_hud() -> void:
 	_countdown_label.visible = false
 	_hud_layer.add_child(_countdown_label)
 
-	# Painel maior e com mais espaco reservado pros detalhes/ranking:
-	# antes o texto (nome, hits/misses, cabecalho + linhas do ranking)
-	# nao cabia na area reservada e vazava pra fora do painel.
+	# Painel reservado somente ao resultado da partida atual.
 	_result_panel = Panel.new()
 	_result_panel.position = _center - Vector2(_radius * 0.62, _radius * 0.56)
 	_result_panel.size = Vector2(_radius * 1.24, _radius * 1.12)
@@ -1108,13 +1133,20 @@ func _finish_game(failed: bool) -> void:
 
 	var score: float = _score_percent()
 	_result_score_percent = score
-	_result_title.text = "PRÓXIMA MÚSICA" if score >= RESULT_PASS_PERCENT else "TENTE NOVAMENTE"
+	_result_title.text = "CLASSIFICADO" if score >= RESULT_PASS_PERCENT else "NÃO CLASSIFICADO"
 	_result_score.text = "%.2f%%" % score
+	_result_score.add_theme_color_override(
+		"font_color",
+		_primary_color() if score >= RESULT_PASS_PERCENT else Color(1.0, 0.08, 0.12, 1.0)
+	)
 	_result_details.text = (
-		"HITS %d   MISSES %d\nMAX COMBO %d\n%s"
-		% [_hits, _misses, _max_combo, _result_action_hint()]
+		"PARTIDA ATUAL\nACERTOS %d   ERROS %d\nMAX COMBO %d\n%s\n%s"
+		% [_hits, _misses, _max_combo, _result_qualification_text(), _result_action_hint()]
 	)
 	_save_record(score)
+	_best_score = maxf(_best_score, score)
+	if _label_best != null and is_instance_valid(_label_best):
+		_label_best.text = "BEST  %.2f%%" % _best_score
 	LED_CLIENT.clear_all()
 
 	_play_game_over_sting()
@@ -1172,6 +1204,12 @@ func _result_action_hint() -> String:
 	if _result_score_percent >= RESULT_PASS_PERCENT:
 		return "START OU TOQUE: PRÓXIMA MÚSICA\nMENU AUTOMÁTICO EM 12 SEGUNDOS"
 	return "START OU TOQUE: TENTAR NOVAMENTE\nMENU AUTOMÁTICO EM 12 SEGUNDOS"
+
+
+func _result_qualification_text() -> String:
+	if _result_score_percent >= RESULT_PASS_PERCENT:
+		return "APROVADO • PRÓXIMA MÚSICA LIBERADA"
+	return "MÍNIMO 70% • TENTE NOVAMENTE"
 
 
 func _activate_result_action() -> void:
@@ -1274,6 +1312,25 @@ func _save_record(score: float) -> void:
 	var write_file := FileAccess.open(RECORD_PATH, FileAccess.WRITE)
 	if write_file != null:
 		write_file.store_string(JSON.stringify(data, "\t"))
+
+
+func _read_best_score() -> float:
+	if not FileAccess.file_exists(RECORD_PATH):
+		return 0.0
+	var read_file := FileAccess.open(RECORD_PATH, FileAccess.READ)
+	if read_file == null:
+		return 0.0
+	var parsed: Variant = JSON.parse_string(read_file.get_as_text())
+	if not parsed is Dictionary:
+		return 0.0
+	var song_value: Variant = (parsed as Dictionary).get(
+		str(_song.get("id", _song_id())),
+		{}
+	)
+	if not song_value is Dictionary:
+		return 0.0
+	var key: String = "dificil" if _difficulty_name == "hard" else "facil"
+	return float((song_value as Dictionary).get(key, 0.0))
 
 
 func _go_to_selector() -> void:
@@ -1392,6 +1449,29 @@ func _make_label(
 	label.add_theme_constant_override("outline_size", 3)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
+
+
+func _fit_label_to_width(
+	label: Label,
+	max_width: float,
+	base_font_size: int,
+	min_font_size: int
+) -> void:
+	var font: Font = label.get_theme_font("font")
+	if font == null:
+		return
+	var size_value: int = maxi(base_font_size, min_font_size)
+	while size_value > min_font_size:
+		var measured: float = font.get_string_size(
+			label.text,
+			HORIZONTAL_ALIGNMENT_LEFT,
+			-1.0,
+			size_value
+		).x
+		if measured <= max_width:
+			break
+		size_value -= 1
+	label.add_theme_font_size_override("font_size", size_value)
 
 
 func _top_panel_style() -> StyleBoxFlat:

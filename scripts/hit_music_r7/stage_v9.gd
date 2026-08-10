@@ -10,10 +10,6 @@ const SETTINGS_GATE: Script = preload(
 const ERROR_LIMIT_RATIO: float = 0.30
 const DEFAULT_PLAYER_NAME: String = "PLAYER 1"
 const RANKING_LIMIT: int = 10
-# So os 3 melhores aparecem no modal final — a area reservada pro
-# texto de resultado e pequena, e com todos os 10 guardados (usados
-# so pro arquivo de recordes) o texto vazava pra fora do painel.
-const TOP_RANKING_DISPLAY: int = 3
 
 var _difficulty_confirmed: bool = false
 var _missed_time: float = 0.0
@@ -600,13 +596,13 @@ func _finish_game(failed: bool) -> void:
 
 	if _result_details != null:
 		_result_details.text = (
-			"%s\nHITS %d   MISSES %d   MAX COMBO %d\n%s\n%s"
+			"PARTIDA ATUAL • %s\nACERTOS %d   ERROS %d\nMAX COMBO %d\n%s\n%s"
 			% [
 				_player_name,
 				_hits,
 				_misses,
 				_max_combo,
-				_ranking_text(),
+				_result_qualification_text(),
 				_result_action_hint(),
 			]
 		)
@@ -691,76 +687,6 @@ func _save_record(score: float) -> void:
 		write_file.store_string(
 			JSON.stringify(data, "\t")
 		)
-
-
-func _ranking_text() -> String:
-	if not FileAccess.file_exists(RECORD_PATH):
-		return "RANKING\n1. %s  %.2f%%" % [
-			_player_name,
-			_score_percent(),
-		]
-
-	var read_file := FileAccess.open(
-		RECORD_PATH,
-		FileAccess.READ
-	)
-	if read_file == null:
-		return "RANKING INDISPONIVEL"
-
-	var parsed: Variant = JSON.parse_string(
-		read_file.get_as_text()
-	)
-	if not parsed is Dictionary:
-		return "RANKING INDISPONIVEL"
-
-	var song_id: String = str(
-		_song.get("id", _song_id())
-	)
-	var song_value: Variant = (
-		parsed as Dictionary
-	).get(song_id, {})
-	if not song_value is Dictionary:
-		return "RANKING\nSEM REGISTROS"
-
-	var key: String = (
-		"dificil"
-		if _difficulty_name == "hard"
-		else "facil"
-	)
-	var ranking_root_value: Variant = (
-		song_value as Dictionary
-	).get("ranking", {})
-	if not ranking_root_value is Dictionary:
-		return "RANKING\nSEM REGISTROS"
-
-	var list_value: Variant = (
-		ranking_root_value as Dictionary
-	).get(key, [])
-	if not list_value is Array:
-		return "RANKING\nSEM REGISTROS"
-
-	var ranking: Array = list_value as Array
-	var lines: Array[String] = ["RANKING " + key.to_upper()]
-	var count: int = mini(ranking.size(), TOP_RANKING_DISPLAY)
-
-	for index in range(count):
-		var item_value: Variant = ranking[index]
-		if not item_value is Dictionary:
-			continue
-		var item: Dictionary = item_value as Dictionary
-		lines.append(
-			"%d. %s  %.2f%%"
-			% [
-				index + 1,
-				str(item.get("name", "PLAYER")),
-				float(item.get("score", 0.0)),
-			]
-		)
-
-	if lines.size() == 1:
-		lines.append("SEM REGISTROS")
-
-	return "\n".join(lines)
 
 
 func _update_pre_game_styles() -> void:
