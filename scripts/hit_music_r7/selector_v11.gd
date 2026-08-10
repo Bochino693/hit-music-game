@@ -24,8 +24,7 @@ func _ready() -> void:
 
 
 func _refresh_menu_leds_v11() -> void:
-	LED_CLIENT_V11.menu_state()
-	LED_CLIENT_V11.set_lane(DOWN_LANE_INDEX, LED_CLIENT_V11.MENU_NEXT_COLOR)
+	_refresh_selector_leds()
 
 
 func _input(event: InputEvent) -> void:

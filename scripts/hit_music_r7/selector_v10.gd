@@ -15,11 +15,7 @@ const DOWN_LANE_INDEX: int = 3
 func _ready() -> void:
 	Engine.max_fps = 120
 	super._ready()
-	LED_CLIENT.menu_state(
-		_index,
-		_song_primary(_songs[_index] as Dictionary)
-	)
-	LED_CLIENT.set_lane(DOWN_LANE_INDEX, LED_CLIENT.MENU_NEXT_COLOR)
+	_refresh_selector_leds()
 
 
 func _process(delta: float) -> void:
@@ -39,11 +35,22 @@ func _toggle_difficulty() -> void:
 func _change_selection(direction: int) -> void:
 	super._change_selection(direction)
 	LED_CLIENT.menu_next_feedback()
-	LED_CLIENT.menu_state(
-		_index,
-		_song_primary(_songs[_index] as Dictionary)
+	_refresh_selector_leds()
+
+
+## Tres botoes acesos nesta tela: A (proximo), B (selecionar) e D
+## (anterior). Vai tudo num unico comando MENU estendido — mandar um
+## "LED <idx>" avulso por cima do MENU nao funciona, porque no
+## firmware o handler de LED zera o efeito de menu e apaga A e B.
+func _refresh_selector_leds() -> void:
+	LED_CLIENT.menu_state_three(
+		_song_primary(_songs[_index] as Dictionary),
+		LED_CLIENT.MENU_SELECT_COLOR,
+		_song_primary(_songs[_index] as Dictionary),
+		0,
+		1,
+		DOWN_LANE_INDEX
 	)
-	LED_CLIENT.set_lane(DOWN_LANE_INDEX, LED_CLIENT.MENU_NEXT_COLOR)
 
 
 func _input(event: InputEvent) -> void:

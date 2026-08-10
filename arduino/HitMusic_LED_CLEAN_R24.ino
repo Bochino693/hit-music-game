@@ -1,9 +1,21 @@
 /*
   ============================================================
-  HIT MUSIC CLEAN R24 - FIRMWARE UNICO
+  HIT MUSIC CLEAN R25 - FIRMWARE UNICO
   ============================================================
 
-  Correcoes em relacao ao R11:
+  Novidade do R25 (unica mudanca em relacao ao R24):
+
+  0) MENU COM TERCEIRA LANE OPCIONAL
+     A tela de selecao de musica usa tres botoes fisicos
+     (A sobe, D desce, B seleciona), mas o MENU do R24 so
+     acendia dois. Mandar "LED <idx>" por cima do MENU NAO
+     resolve: o handler de LED zera efeito_global e apaga
+     justamente os LEDs de A e B. Agora o terceiro indice
+     entra no proprio comando MENU, de forma retrocompativel
+     (um MENU de 8 tokens funciona igual ao R24).
+
+  ------------------------------------------------------------
+  Correcoes que ja vinham do R24 em relacao ao R11:
 
   1) REFRESH PERIODICO (corrige LEDs do menu apagando sozinhos)
      No R11, MENU e LED estatico eram desenhados UMA unica vez e
@@ -63,6 +75,14 @@
   MENU <rA> <gA> <bA> <rB> <gB> <bB> [idxA] [idxB]
                                  dois LEDs de navegacao acesos
                                  idxA/idxB opcionais (padrao 0 e 1)
+
+  MENU <rA> <gA> <bA> <rB> <gB> <bB> <idxA> <idxB> <idxC> <rC> <gC> <bC>
+                                 TRES LEDs de navegacao acesos (R25)
+                                 usado na tela de selecao de musica:
+                                 A sobe, D desce, B seleciona.
+                                 Nao use "LED <idx>" para isso: o
+                                 handler de LED zera efeito_global e
+                                 apagaria os LEDs de A e B.
 
   ATTRACT                        modo atracao
   BLINKALL                       inicia contagem em 5
@@ -157,6 +177,23 @@ uint8_t menu_b_g = 209;
 uint8_t menu_b_b = 20;
 uint8_t menu_idx_a = 0;
 uint8_t menu_idx_b = 1;
+
+/*
+  Terceira lane opcional do MENU (R25).
+
+  Motivo: a tela de selecao de musica usa TRES botoes fisicos
+  (A sobe, D desce, B seleciona), mas o MENU do R24 so acendia dois.
+  Mandar "LED <idx>" por cima do MENU NAO funciona: o handler de LED
+  zera efeito_global, o que apagava justamente os LEDs de A e B.
+  Por isso o terceiro indice entra no proprio comando MENU, mantendo
+  o estado do menu atomico em uma unica linha (menos bytes na UART,
+  como manda o item 3 do cabecalho).
+*/
+bool menu_c_ativo = false;
+uint8_t menu_c_r = 0;
+uint8_t menu_c_g = 184;
+uint8_t menu_c_b = 255;
+uint8_t menu_idx_c = 3;
 
 FlashTazo flashes[NUM_TAZOS];
 EfeitoGlobal efeito_global = EFEITO_NENHUM;
@@ -406,7 +443,7 @@ void processar_comando(char *linha) {
     Serial.println(F("PONG"));
   }
   else if (strcmp(cmd, "VERSION") == 0) {
-    Serial.println(F("HITMUSIC_CLEAN_R24"));
+    Serial.println(F("HITMUSIC_CLEAN_R25"));
   }
   else if (strcmp(cmd, "LED") == 0 && qtd >= 5) {
     #if 1
@@ -482,6 +519,23 @@ void processar_comando(char *linha) {
       int ib = atoi(tokens[8]);
       if (indice_valido(ia)) menu_idx_a = (uint8_t)ia;
       if (indice_valido(ib)) menu_idx_b = (uint8_t)ib;
+    }
+
+    /*
+      Terceira lane (R25) e opcional e retrocompativel: um MENU com
+      8 tokens continua se comportando exatamente como no R24.
+      Com 12 tokens acende tambem idxC na cor informada.
+    */
+    menu_c_ativo = false;
+    if (qtd >= 13) {
+      int ic = atoi(tokens[9]);
+      if (indice_valido(ic)) {
+        menu_idx_c = (uint8_t)ic;
+        menu_c_r = limitar_byte(atoi(tokens[10]));
+        menu_c_g = limitar_byte(atoi(tokens[11]));
+        menu_c_b = limitar_byte(atoi(tokens[12]));
+        menu_c_ativo = true;
+      }
     }
 
     /*
@@ -593,6 +647,9 @@ void cor_menu(uint8_t idx, uint8_t &r, uint8_t &g, uint8_t &b) {
   }
   else if (idx == menu_idx_b) {
     r = menu_b_r; g = menu_b_g; b = menu_b_b;
+  }
+  else if (menu_c_ativo && idx == menu_idx_c) {
+    r = menu_c_r; g = menu_c_g; b = menu_c_b;
   }
   else {
     r = 0; g = 0; b = 0;

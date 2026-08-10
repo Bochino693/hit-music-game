@@ -241,14 +241,10 @@ func send(command: String) -> bool:
 		if op == "MENU" or op == "CLEAR":
 			return _write_ui_state(cmd)
 
-		if op == "LED":
-			# Guia estatica adicional além das 2 lanes do proprio
-			# comando MENU (que so acende idxA/idxB, tudo mais fica
-			# apagado) — usado quando uma tela de menu precisa de um
-			# terceiro botao aceso (ex.: input D no seletor de musica).
-			return _enqueue_transient(cmd)
-
-		# Demais comandos (HIT/PULSE/OK/ERR) continuam sem flash fisico no menu.
+		# No seletor não existe flash físico. LED avulso tambem nao
+		# entra aqui: no firmware, "LED <idx>" zera efeito_global e
+		# apagaria os proprios LEDs do MENU. Uma terceira lane de
+		# navegacao vai no comando MENU estendido (ver menu3()).
 		return true
 
 	if op in [
@@ -320,6 +316,37 @@ func menu(
 			roundi(clampf(cor_b.b, 0.0, 1.0) * 255.0),
 			clampi(idx_a, 0, 7),
 			clampi(idx_b, 0, 7),
+		]
+	)
+
+
+## MENU com uma terceira lane acesa (firmware R25+). Usado na tela de
+## selecao de musica, que tem tres botoes: A sobe, D desce, B
+## seleciona. Nao da pra fazer isso com "LED <idx>" por cima do MENU:
+## no firmware, LED zera o efeito de menu e apagaria A e B.
+func menu3(
+	cor_a: Color,
+	cor_b: Color,
+	cor_c: Color,
+	idx_a: int = 0,
+	idx_b: int = 1,
+	idx_c: int = 3
+) -> bool:
+	return send(
+		"MENU %d %d %d %d %d %d %d %d %d %d %d %d"
+		% [
+			roundi(clampf(cor_a.r, 0.0, 1.0) * 255.0),
+			roundi(clampf(cor_a.g, 0.0, 1.0) * 255.0),
+			roundi(clampf(cor_a.b, 0.0, 1.0) * 255.0),
+			roundi(clampf(cor_b.r, 0.0, 1.0) * 255.0),
+			roundi(clampf(cor_b.g, 0.0, 1.0) * 255.0),
+			roundi(clampf(cor_b.b, 0.0, 1.0) * 255.0),
+			clampi(idx_a, 0, 7),
+			clampi(idx_b, 0, 7),
+			clampi(idx_c, 0, 7),
+			roundi(clampf(cor_c.r, 0.0, 1.0) * 255.0),
+			roundi(clampf(cor_c.g, 0.0, 1.0) * 255.0),
+			roundi(clampf(cor_c.b, 0.0, 1.0) * 255.0),
 		]
 	)
 

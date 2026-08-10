@@ -76,8 +76,17 @@ func _refresh_menu_leds_r21() -> void:
 
 	_r21_menu_signature = signature
 
+	# Tres botoes acesos nesta tela: A (proximo, lane 0), B
+	# (selecionar, lane 1) e D (anterior, lane 3). Vai num unico
+	# comando MENU estendido (firmware R25+): mandar "LED <idx>" por
+	# cima do MENU nao funciona, porque o handler de LED do firmware
+	# zera efeito_global e apagaria justamente A e B.
 	var client := get_node_or_null("/root/LedClient")
-	if client != null and client.has_method("menu"):
+	if client == null:
+		return
+	if client.has_method("menu3"):
+		client.call("menu3", primary, accent, primary, 0, 1, DOWN_LANE_INDEX)
+	elif client.has_method("menu"):
 		client.call("menu", primary, accent, 0, 1)
 
 

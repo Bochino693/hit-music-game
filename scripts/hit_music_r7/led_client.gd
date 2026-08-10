@@ -67,6 +67,39 @@ static func menu_state(_index: int = 0, color: Color = MENU_NEXT_COLOR) -> void:
 	menu_state_colors(color, MENU_SELECT_COLOR)
 
 
+## Menu com tres botoes acesos (A = proximo, B = selecionar, C =
+## anterior). Exige firmware R25+; em firmware antigo o Arduino
+## ignora os tokens extras e acende so A e B, entao degrada bem.
+static func menu_state_three(
+	next_color: Color = MENU_NEXT_COLOR,
+	select_color: Color = MENU_SELECT_COLOR,
+	previous_color: Color = MENU_NEXT_COLOR,
+	idx_next: int = 0,
+	idx_select: int = 1,
+	idx_previous: int = 3
+) -> void:
+	var next_rgb := _rgb(next_color)
+	var select_rgb := _rgb(select_color)
+	var previous_rgb := _rgb(previous_color)
+
+	send_raw(
+		"MENU %d %d %d %d %d %d %d %d %d %d %d %d" % [
+			next_rgb.x,
+			next_rgb.y,
+			next_rgb.z,
+			select_rgb.x,
+			select_rgb.y,
+			select_rgb.z,
+			clampi(idx_next, 0, 7),
+			clampi(idx_select, 0, 7),
+			clampi(idx_previous, 0, 7),
+			previous_rgb.x,
+			previous_rgb.y,
+			previous_rgb.z
+		]
+	)
+
+
 static func menu_state_colors(next_color: Color, select_color: Color) -> void:
 	var next_rgb := _rgb(next_color)
 	var select_rgb := _rgb(select_color)
