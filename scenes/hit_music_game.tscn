@@ -1,0 +1,36 @@
+[gd_scene format=3 uid="uid://bnhu7ij47sv5c"]
+
+[node name="HitMusicGame" type="Node2D" unique_id=1533788536]
+
+[node name="Background" type="Node2D" parent="." unique_id=654054964]
+
+[node name="VideoBackground" type="VideoStreamPlayer" parent="Background" unique_id=1054212086]
+expand = true
+loop = true
+
+[node name="ThemeRenderer" type="Node2D" parent="Background" unique_id=550917836]
+
+[node name="Playfield" type="Node2D" parent="." unique_id=1476250771]
+
+[node name="RingRenderer" type="Node2D" parent="Playfield" unique_id=1802646315]
+z_index = 10
+
+[node name="Notes" type="Node2D" parent="Playfield" unique_id=81684712]
+z_index = 20
+
+[node name="Effects" type="Node2D" parent="Playfield" unique_id=1943981536]
+z_index = 30
+
+[node name="Managers" type="Node" parent="." unique_id=1825964249]
+
+[node name="SongClock" type="Node" parent="Managers" unique_id=1345585484]
+
+[node name="ChartPlayer" type="Node" parent="Managers" unique_id=1700426855]
+
+[node name="JudgementSystem" type="Node" parent="Managers" unique_id=268273760]
+
+[node name="InputRouter" type="Node" parent="Managers" unique_id=1632998319]
+
+[node name="Audio" type="Node" parent="." unique_id=1264838023]
+
+[node name="MusicPlayer" type="AudioStreamPlayer" parent="Audio" unique_id=1254355253]
