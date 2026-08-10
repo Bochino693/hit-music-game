@@ -27,6 +27,12 @@ var _lane_flash_colors: Array = []
 var _lane_flash_energy: Array = []
 var _lane_flash_decay: Array = []
 
+# Pulso de energia que contagia a borda inteira a partir do ponto de
+# acerto: nasce no angulo do hit e viaja pros dois lados do anel ate
+# se encontrar do lado oposto, em vez de ficar so localizado na lane.
+var _ring_pulses: Array = []
+const RING_PULSE_DURATION: float = 0.85
+
 var _video_style: StyleBoxFlat
 var _video_inner_style: StyleBoxFlat
 
@@ -131,6 +137,16 @@ func flash_ring_at(
 	_lane_flash_colors[lane] = color
 	_lane_flash_energy[lane] = clampf(float(_lane_flash_energy[lane]) + intensity, 0.0, 1.6)
 	_lane_flash_decay[lane] = decay_speed
+
+	_ring_pulses.append({
+		"angle": (lane_positions[lane] - center).angle(),
+		"color": color,
+		"start": float(Time.get_ticks_msec()) / 1000.0,
+		"duration": RING_PULSE_DURATION * (0.55 + minf(intensity, 1.4) * 0.5),
+	})
+	if _ring_pulses.size() > 10:
+		_ring_pulses.remove_at(0)
+
 	queue_redraw()
 
 
@@ -162,7 +178,13 @@ func _process(delta: float) -> void:
 		if now - float(effect.get("start", now)) >= float(effect.get("duration", 0.5)):
 			effects.remove_at(index)
 
-	if not effects.is_empty() or lane_flash_active or game_state == "playing" or game_state == "selector":
+	for index in range(_ring_pulses.size() - 1, -1, -1):
+		var pulse: Dictionary = _ring_pulses[index]
+		if now - float(pulse.get("start", now)) >= float(pulse.get("duration", RING_PULSE_DURATION)):
+			_ring_pulses.remove_at(index)
+
+	var pulses_active: bool = not _ring_pulses.is_empty()
+	if not effects.is_empty() or lane_flash_active or pulses_active or game_state == "playing" or game_state == "selector":
 		queue_redraw()
 
 
@@ -175,6 +197,7 @@ func _draw() -> void:
 	_draw_ambient_particles()
 	_draw_inner_technical_rings()
 	_draw_ring()
+	_draw_ring_pulses()
 	_draw_lane_energy()
 
 	if game_state == "playing" or game_state == "countdown":
@@ -302,11 +325,30 @@ func _draw_theme_geometry() -> void:
 			var mix_value: float = float(
 				(index + layer) % 4
 			) / 4.0
+			# Deriva lenta de matiz entre primary/secondary/accent —
+			# em vez de cor fixa por indice, da uma leitura mais viva
+			# e "espectral" (aurora), nao uma grade tecnica estatica.
+			var drift_mix: float = 0.5 + 0.5 * sin(
+				time_value * 0.55 + float(layer) * 1.7 + float(index) * 0.42
+			)
 			var color: Color = primary.lerp(
+				secondary,
+				drift_mix * 0.30
+			).lerp(
 				accent,
 				mix_value * 0.55
 			)
 			color.a = intensity * (0.20 + float(layer) * 0.024) + beat * 0.018 + reaction * 0.055
+
+			# Brilho suave por tras de cada elemento — troca a leitura
+			# "linha tecnica fina" por algo mais nebuloso/energetico.
+			_draw_soft_glow(
+				position_value,
+				size * 2.35,
+				color,
+				(intensity * 0.6 + reaction * 0.30) * (0.5 + beat * 0.3),
+				3
+			)
 
 			match configured_pattern:
 				"hex":
@@ -372,6 +414,13 @@ func _draw_theme_geometry() -> void:
 			+ Vector2(cos(petal_angle), sin(petal_angle))
 			* radius * 0.105
 		)
+		_draw_soft_glow(
+			petal_position,
+			radius * (0.070 + beat * 0.010),
+			primary,
+			0.14 + reaction * 0.10,
+			3
+		)
 		_draw_rotated_diamond(
 			petal_position,
 			radius * (0.050 + beat * 0.006),
@@ -380,6 +429,7 @@ func _draw_theme_geometry() -> void:
 			maxf(2.0, radius * 0.0040)
 		)
 
+	_draw_soft_glow(center, radius * 0.135, secondary, 0.10 + reaction * 0.10, 3)
 	_draw_regular_polygon(
 		center,
 		radius * (0.095 + beat * 0.008),
@@ -399,24 +449,59 @@ func _draw_theme_geometry() -> void:
 
 
 func _draw_ambient_particles() -> void:
-	# Particulas deterministicas em tres profundidades: detalhadas e leves.
+	# Particulas deterministicas em tres profundidades. Cada uma usa
+	# gradiente em camadas (em vez de dois circulos chapados) e um
+	# rastro curto na direcao do movimento — le como poeira de energia
+	# em vez de bolinhas soltas. A orbita minima fica mais afastada do
+	# centro pra nao amontoar tudo no meio do tabuleiro.
 	var time_value: float = _idle_time()
 	var beat: float = _beat_pulse()
 	var palette: Array[Color] = [_primary(), _secondary(), _accent()]
-	for index in range(42):
+	for index in range(36):
 		var seed: float = float(index) * 12.9898
 		var depth: float = 0.35 + float(index % 3) * 0.27
 		var base_angle: float = fmod(absf(sin(seed) * 43758.5453), TAU)
-		var orbit: float = radius * (0.16 + fmod(absf(cos(seed * 0.73)) * 9.7, 0.70))
+		var orbit: float = radius * (0.24 + fmod(absf(cos(seed * 0.73)) * 9.7, 0.62))
 		var direction_sign: float = -1.0 if index % 2 == 0 else 1.0
-		var angle: float = base_angle + time_value * (0.018 + depth * 0.022) * direction_sign
+		var angular_speed: float = (0.018 + depth * 0.022) * direction_sign
+		var angle: float = base_angle + time_value * angular_speed
 		var drift: float = sin(time_value * (0.32 + depth * 0.16) + seed) * radius * 0.012
 		var particle_position: Vector2 = center + Vector2(cos(angle), sin(angle)) * (orbit + drift)
 		var particle_color: Color = palette[index % palette.size()]
 		var twinkle: float = 0.5 + 0.5 * sin(time_value * (1.2 + depth) + seed)
-		var size: float = radius * (0.0018 + depth * 0.0022 + beat * 0.0008)
-		draw_circle(particle_position, size * 2.8, Color(particle_color.r, particle_color.g, particle_color.b, 0.025 + twinkle * 0.025), true)
-		draw_circle(particle_position, size, Color(particle_color.r, particle_color.g, particle_color.b, 0.20 + twinkle * 0.38), true)
+		var size: float = radius * (0.0026 + depth * 0.0026 + beat * 0.0010)
+
+		# Rastro: amostra a posicao um instante atras no tempo, na
+		# mesma orbita, e desenha uma linha fina que desvanece.
+		var trail_angle: float = angle - angular_speed * 0.24
+		var trail_position: Vector2 = center + Vector2(cos(trail_angle), sin(trail_angle)) * (orbit + drift)
+		draw_line(
+			trail_position,
+			particle_position,
+			Color(particle_color.r, particle_color.g, particle_color.b, 0.10 + twinkle * 0.12),
+			maxf(1.0, size * 0.9),
+			true
+		)
+
+		_draw_soft_glow(
+			particle_position,
+			size * 3.1,
+			particle_color,
+			0.055 + twinkle * 0.075,
+			3
+		)
+		draw_circle(
+			particle_position,
+			size * 0.85,
+			Color(particle_color.r, particle_color.g, particle_color.b, 0.35 + twinkle * 0.45),
+			true
+		)
+		draw_circle(
+			particle_position,
+			size * 0.30,
+			Color(1.0, 1.0, 1.0, 0.25 + twinkle * 0.35),
+			true
+		)
 
 func _draw_diamond_field(
 	rotation: float,
@@ -644,6 +729,65 @@ func _draw_ring() -> void:
 				true
 			)
 
+
+## Onda de energia que sai do ponto de acerto e contagia a borda
+## inteira: viaja pros dois lados do anel (sentido horario e
+## anti-horario) ate se encontrar do lado oposto, com uma cabeça
+## brilhante e um rastro que desvanece atras dela.
+func _draw_ring_pulses() -> void:
+	if _ring_pulses.is_empty():
+		return
+
+	var ring_radius: float = radius * 0.905
+	var width: float = maxf(4.0, radius * 0.0072)
+	var now: float = float(Time.get_ticks_msec()) / 1000.0
+
+	for pulse_value in _ring_pulses:
+		var pulse: Dictionary = pulse_value
+		var duration: float = maxf(float(pulse.get("duration", RING_PULSE_DURATION)), 0.001)
+		var t: float = clampf((now - float(pulse.get("start", now))) / duration, 0.0, 1.0)
+		if t >= 1.0:
+			continue
+
+		var color: Color = pulse.get("color", Color.WHITE)
+		var base_angle: float = float(pulse.get("angle", 0.0))
+		var eased: float = 1.0 - pow(1.0 - t, 2.2)
+		var travel: float = eased * PI * 1.02
+		var fade: float = pow(1.0 - t, 1.4)
+
+		for direction_sign in [1.0, -1.0]:
+			var head_angle: float = base_angle + travel * direction_sign
+			var trail_span: float = minf(travel, PI * 0.34)
+			var trail_from: float = head_angle - trail_span * direction_sign
+
+			draw_arc(
+				center,
+				ring_radius,
+				minf(trail_from, head_angle),
+				maxf(trail_from, head_angle),
+				28,
+				Color(color.r, color.g, color.b, fade * 0.40),
+				width * (2.4 + fade * 1.6),
+				true
+			)
+
+			var head_span: float = 0.045
+			var head_color: Color = Color(
+				lerpf(1.0, color.r, 0.55),
+				lerpf(1.0, color.g, 0.55),
+				lerpf(1.0, color.b, 0.55),
+				fade
+			)
+			draw_arc(
+				center,
+				ring_radius,
+				head_angle - head_span,
+				head_angle + head_span,
+				10,
+				head_color,
+				width * (1.9 + fade * 1.1),
+				true
+			)
 
 
 func _draw_lane_energy() -> void:
@@ -1015,12 +1159,17 @@ func _draw_star(
 	middle.append(middle[0])
 	inner.append(inner[0])
 
+	# Brilho por tras da estrela — da mais definicao/profundidade em
+	# vez de so linhas finas sobre o fundo.
+	_draw_soft_glow(position_value, size * 1.55, color, 0.34 + pulse * 0.12, 4)
+
 	draw_polyline(outer, Color(0.0, 0.0, 0.0, 0.90), maxf(12.0, size * 0.30), true)
 	draw_polyline(outer, Color.WHITE, maxf(7.0, size * 0.16), true)
 	draw_polyline(middle, color, maxf(5.0, size * 0.13), true)
 	draw_polyline(inner, accent, maxf(3.5, size * 0.10), true)
 	draw_circle(position_value, size * 0.18, Color(0.002, 0.006, 0.016, 0.96), true)
-	draw_circle(position_value, size * 0.075, Color.WHITE, true)
+	draw_circle(position_value, size * 0.10, Color.WHITE, true)
+	draw_circle(position_value, size * 0.045, accent, true)
 
 
 func _draw_effects() -> void:
@@ -1063,10 +1212,11 @@ func _draw_tap_prism(
 	var flash_radius: float = radius * (
 		0.055 + progress * 0.190
 	)
+	_draw_soft_glow(position_value, flash_radius * 1.9, color, life * 0.55, 5)
 	draw_circle(
 		position_value,
 		flash_radius,
-		Color(1.0, 1.0, 1.0, life * 0.22),
+		Color(1.0, 1.0, 1.0, life * 0.30),
 		true
 	)
 
@@ -1143,6 +1293,14 @@ func _draw_slide_burst(
 	life: float,
 	rotation_value: float
 ) -> void:
+	_draw_soft_glow(
+		position_value,
+		radius * (0.13 + progress * 0.20),
+		color,
+		life * 0.50,
+		4
+	)
+
 	for layer in range(4):
 		var size: float = radius * (0.105 + float(layer) * 0.030)
 		size *= 0.30 + progress * 1.10
@@ -1181,6 +1339,14 @@ func _draw_hold_burst(
 	# Final do HOLD: portal cristalino, sem simples aneis redondos.
 	var rotation_value: float = (
 		float(Time.get_ticks_msec()) / 1000.0 * 1.8
+	)
+
+	_draw_soft_glow(
+		position_value,
+		radius * (0.15 + progress * 0.22),
+		color,
+		life * 0.55,
+		5
 	)
 
 	for layer in range(5):
@@ -1312,6 +1478,31 @@ func _draw_pointer(position_value: Vector2) -> void:
 			corner + side * outer_radius * 0.20,
 			Color(color.r, color.g, color.b, 0.75),
 			maxf(2.0, radius * 0.004),
+			true
+		)
+
+
+## Gradiente radial "falso" reutilizavel: camadas de circulo com alpha
+## decrescente. Usado para dar leitura "espectral"/energetica (glow
+## suave) em vez de contorno solido e chapado — na mandala de fundo,
+## nas particulas ambiente e nos bursts de acerto (tap/hold/slide).
+func _draw_soft_glow(
+	position_value: Vector2,
+	radius_value: float,
+	color: Color,
+	alpha: float,
+	layers: int = 4
+) -> void:
+	if radius_value <= 0.0 or alpha <= 0.0:
+		return
+	for layer in range(layers):
+		var t: float = float(layer) / float(maxi(layers - 1, 1))
+		var layer_radius: float = radius_value * (1.0 - t * 0.72)
+		var layer_alpha: float = alpha * (0.16 + (1.0 - t) * 0.56)
+		draw_circle(
+			position_value,
+			layer_radius,
+			Color(color.r, color.g, color.b, layer_alpha),
 			true
 		)
 
