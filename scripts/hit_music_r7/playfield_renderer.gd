@@ -3,6 +3,7 @@ extends Node2D
 # HIT MUSIC R12 - LEITURA LIMPA, HOLD ARCADE E AMBIENTE REFINADO
 
 const PATH_BUILDER: Script = preload("res://scripts/hit_music_r7/path_builder.gd")
+const TAP_PALETTE: Script = preload("res://scripts/hit_music_r7/tap_palette.gd")
 
 var center: Vector2 = Vector2.ZERO
 var radius: float = 100.0
@@ -17,6 +18,7 @@ var pointer_active: bool = false
 var effects: Array = []
 var _hit_energy: float = 0.0
 var _combo_energy: float = 0.0
+var _hit_color: Color = Color.WHITE
 
 # Nove ceus reutilizaveis. Os sete cenarios atuais recebem estilos
 # exclusivos; os outros dois ficam prontos para novas musicas.
@@ -137,16 +139,17 @@ func add_effect(kind: String, position_value: Vector2, color: Color) -> void:
 	queue_redraw()
 
 
-func register_hit(quality: float, combo: int) -> void:
+func register_hit(quality: float, combo: int, color: Color = Color.WHITE) -> void:
 	# Um unico impulso alimenta fundo, bolinhas e anel. Sem nodes temporarios.
 	var carmine_boost: float = 1.22 if str(song.get("id", "")) == "carmine" else 1.0
 	_hit_energy = minf(1.0, _hit_energy + (0.30 + quality * 0.30) * carmine_boost)
 	_combo_energy = clampf(float(combo) / 40.0, 0.0, 1.0)
+	_hit_color = color
 	queue_redraw()
 
 
-## Acende a lane mais proxima de position_value com a cor do
-## julgamento (PERFECT, GOOD, HOLD, SLIDE ou MISS). intensity controla
+## Acende a lane mais proxima de position_value com a cor real do
+## tazo/evento. intensity controla
 ## o quao forte o flash comeca e decay_speed controla quao rapido ele
 ## apaga — assim cada tipo de acerto tem uma assinatura visual propria
 ## na propria linha de encaixe, nao so no burst central.
@@ -254,15 +257,19 @@ func _colors() -> Dictionary:
 
 
 func _primary() -> Color:
-	return _colors().get("primary", Color(0.05, 0.92, 1.0, 1.0))
+	return TAP_PALETTE.vivid_theme(
+		_colors().get("primary", TAP_PALETTE.TAP_CYAN)
+	)
 
 
 func _secondary() -> Color:
-	return _colors().get("secondary", Color.WHITE)
+	return TAP_PALETTE.vivid_theme(_colors().get("secondary", Color.WHITE))
 
 
 func _accent() -> Color:
-	return _colors().get("accent", Color(1.0, 0.84, 0.05, 1.0))
+	return TAP_PALETTE.vivid_theme(
+		_colors().get("accent", TAP_PALETTE.TAP_YELLOW)
+	)
 
 
 func _dark() -> Color:
@@ -827,8 +834,19 @@ func _draw_inner_technical_rings() -> void:
 	var primary: Color = _primary()
 	var accent: Color = _accent()
 	var reaction: float = _hit_energy + _combo_energy * 0.34
+	var hit_mix: float = clampf(_hit_energy * 1.55, 0.0, 1.0)
+	var reactive_primary: Color = primary.lerp(_hit_color, hit_mix)
+	var reactive_accent: Color = accent.lerp(_hit_color, hit_mix * 0.90)
 	var carmine_factor: float = 1.30 if str(song.get("id", "")) == "carmine" else 1.0
 	reaction *= carmine_factor
+	if _hit_energy > 0.015:
+		_draw_soft_glow(
+			center,
+			radius * (0.31 + _hit_energy * 0.16),
+			_hit_color,
+			_hit_energy * 0.24,
+			3
+		)
 
 	# Substitui os antigos segmentos redondos por molduras poligonais.
 	for layer in range(3):
@@ -840,7 +858,7 @@ func _draw_inner_technical_rings() -> void:
 		var rotation_value: float = time_value * (
 			0.055 + float(layer) * 0.025 + reaction * 0.12
 		)
-		var color: Color = primary if layer % 2 == 0 else accent
+		var color: Color = reactive_primary if layer % 2 == 0 else reactive_accent
 		_draw_regular_polygon(
 			center,
 			layer_size,
@@ -997,9 +1015,9 @@ func _draw_ring_pulses() -> void:
 
 			var head_span: float = 0.045
 			var head_color: Color = Color(
-				lerpf(1.0, color.r, 0.55),
-				lerpf(1.0, color.g, 0.55),
-				lerpf(1.0, color.b, 0.55),
+				lerpf(1.0, color.r, 0.82),
+				lerpf(1.0, color.g, 0.82),
+				lerpf(1.0, color.b, 0.82),
 				fade
 			)
 			draw_arc(
@@ -1041,7 +1059,11 @@ func _draw_lane_energy() -> void:
 			continue
 
 		var position_value: Vector2 = lane_positions[lane]
-		var color: Color = _accent() if type_name == "hold" else _primary()
+		var color: Color = (
+			TAP_PALETTE.HOLD_YELLOW
+			if type_name == "hold"
+			else TAP_PALETTE.color_for_index(int(event.get("color_index", 0)))
+		)
 		var size: float = radius * (0.028 + progress * 0.032)
 		draw_arc(
 			position_value,
@@ -1087,7 +1109,7 @@ func _draw_hold(event: Dictionary) -> void:
 	var tail: Vector2 = head - direction * length
 	# Hold fino: aproximadamente metade da espessura da R11/R12 inicial.
 	var width: float = radius * 0.050 * float(difficulty.get("hold_width", 1.0))
-	var color: Color = Color(1.0, 0.83, 0.08, 1.0)
+	var color: Color = TAP_PALETTE.HOLD_YELLOW
 	var holding: bool = bool(event.get("_holding", false))
 	if holding:
 		color = color.lerp(Color.WHITE, 0.16)
@@ -1502,9 +1524,11 @@ func _draw_tap_prism(
 		var alpha: float = life * (
 			1.0 - float(layer) * 0.135
 		)
-		var layer_color: Color = Color.WHITE.lerp(
-			color,
-			0.14 + float(layer) * 0.19
+		# Mantem a identidade cromatica do tazo. O branco entra apenas como
+		# brilho, sem lavar um burst vermelho ate ele parecer rosa/branco.
+		var layer_color: Color = color.lerp(
+			Color.WHITE,
+			0.28 - float(layer) * 0.045
 		)
 		layer_color.a = alpha
 		_draw_rotated_diamond(
@@ -1552,10 +1576,10 @@ func _draw_tap_prism(
 				1.0 if polygon_layer == 0 else -1.0
 			),
 			Color(
-				1.0,
-				1.0,
-				1.0,
-				life * (0.64 - float(polygon_layer) * 0.18)
+				color.r,
+				color.g,
+				color.b,
+				life * (0.76 - float(polygon_layer) * 0.18)
 			),
 			maxf(3.0, radius * 0.0070)
 		)

@@ -6,6 +6,7 @@ const PATH_BUILDER: Script = preload("res://scripts/hit_music_r7/path_builder.gd
 const TAP_VISUAL_SCRIPT: Script = preload("res://scripts/hit_music_r7/tap_visual.gd")
 const RENDERER_SCRIPT: Script = preload("res://scripts/hit_music_r7/playfield_renderer.gd")
 const LED_CLIENT: Script = preload("res://scripts/hit_music_r7/led_client.gd")
+const TAP_PALETTE: Script = preload("res://scripts/hit_music_r7/tap_palette.gd")
 
 enum GameState {
 	PRESENTATION,
@@ -59,7 +60,7 @@ const MUSIC_ENERGY_HIT_RECOVERY: float = 0.10
 # Mesmo amarelo usado na fita do hold (playfield_renderer._draw_hold)
 # e no LED fisico (HOLD_COLOR em stage_final.gd) — o hold e sempre
 # essa cor, nunca a cor de destaque da musica.
-const HOLD_VISUAL_COLOR: Color = Color(1.0, 0.83, 0.08, 1.0)
+const HOLD_VISUAL_COLOR: Color = TAP_PALETTE.HOLD_YELLOW
 
 var _song: Dictionary = {}
 var _difficulty_name: String = "easy"
@@ -1011,10 +1012,13 @@ func _resolve_hit(event: Dictionary, kind: String, quality: float) -> void:
 		effect_kind = "slide"
 	elif kind == "hold":
 		effect_kind = "hold"
-	_renderer.add_effect(effect_kind, position_value, _event_color(event))
+	# Uma unica cor governa todo o feedback deste acerto: burst, roda,
+	# mandala e LED. Assim um tazo vermelho nunca gera efeito de outra cor.
+	var hit_color: Color = _event_color(event)
+	_renderer.add_effect(effect_kind, position_value, hit_color)
 	_renderer.flash_ring_at(
 		position_value,
-		_judgement_color(kind, quality),
+		hit_color,
 		0.95 + quality * 0.35,
 		3.1
 	)
@@ -1027,7 +1031,7 @@ func _resolve_hit(event: Dictionary, kind: String, quality: float) -> void:
 	_hits += 1
 	_combo += 1
 	_max_combo = maxi(_max_combo, _combo)
-	_renderer.register_hit(quality, _combo)
+	_renderer.register_hit(quality, _combo, hit_color)
 	_performance = minf(100.0, _performance + (1.15 if quality >= 0.99 else 0.55))
 	# Acertar MANTEM a musica cheia (e recupera se ela tinha caido).
 	_music_energy = minf(1.0, _music_energy + MUSIC_ENERGY_HIT_RECOVERY)
@@ -1074,20 +1078,6 @@ func _event_end_position(event: Dictionary) -> Vector2:
 			return (points_value as PackedVector2Array)[(points_value as PackedVector2Array).size() - 1]
 	var lane: int = clampi(int(event.get("lane", 0)), 0, NUM_LANES - 1)
 	return _lane_positions[lane]
-
-
-## Cor do flash que acende na linha de encaixe para cada tipo de
-## julgamento — antes a linha era sempre branca, sem diferenciar
-## PERFECT de GOOD nem de HOLD/SLIDE.
-func _judgement_color(kind: String, quality: float) -> Color:
-	if kind == "hold":
-		return _accent_color()
-	if kind == "slide":
-		return _primary_color()
-	# tap: PERFECT fica branco-gelo (nitido), GOOD fica na cor de destaque.
-	if quality >= 0.99:
-		return _secondary_color().lerp(_primary_color(), 0.30)
-	return _accent_color()
 
 
 func _event_color(event: Dictionary) -> Color:
@@ -1337,22 +1327,28 @@ func _action_pressed(action: String) -> bool:
 func _primary_color() -> Color:
 	var value: Variant = _song.get("colors", {})
 	if value is Dictionary:
-		return (value as Dictionary).get("primary", Color(0.05, 0.92, 1.0, 1.0))
-	return Color(0.05, 0.92, 1.0, 1.0)
+		return TAP_PALETTE.vivid_theme(
+			(value as Dictionary).get("primary", TAP_PALETTE.TAP_CYAN)
+		)
+	return TAP_PALETTE.TAP_CYAN
 
 
 func _secondary_color() -> Color:
 	var value: Variant = _song.get("colors", {})
 	if value is Dictionary:
-		return (value as Dictionary).get("secondary", Color.WHITE)
+		return TAP_PALETTE.vivid_theme(
+			(value as Dictionary).get("secondary", Color.WHITE)
+		)
 	return Color.WHITE
 
 
 func _accent_color() -> Color:
 	var value: Variant = _song.get("colors", {})
 	if value is Dictionary:
-		return (value as Dictionary).get("accent", Color(1.0, 0.84, 0.05, 1.0))
-	return Color(1.0, 0.84, 0.05, 1.0)
+		return TAP_PALETTE.vivid_theme(
+			(value as Dictionary).get("accent", TAP_PALETTE.TAP_YELLOW)
+		)
+	return TAP_PALETTE.TAP_YELLOW
 
 
 func _dark_color() -> Color:
@@ -1367,13 +1363,7 @@ func _dark_color() -> Color:
 ## chega no lugar, nao numa cor de tema independente da musica (era
 ## isso que ficava dessincronizado antes).
 func _tap_color(index: int) -> Color:
-	match index % 3:
-		1:
-			return Color(1.0, 0.84, 0.08, 1.0)
-		2:
-			return Color(1.0, 0.14, 0.45, 1.0)
-		_:
-			return Color(0.08, 0.92, 1.0, 1.0)
+	return TAP_PALETTE.color_for_index(index)
 
 
 func _load_font() -> Font:

@@ -2,6 +2,7 @@ extends Node2D
 
 const CATALOG: Script = preload("res://scripts/hit_music_r7/catalog.gd")
 const LED_CLIENT: Script = preload("res://scripts/hit_music_r7/led_client.gd")
+const TAP_PALETTE: Script = preload("res://scripts/hit_music_r7/tap_palette.gd")
 
 const TOP_MARGIN_RATIO: float = 0.022
 const TOP_HEIGHT_RATIO: float = 0.205
@@ -999,15 +1000,19 @@ func _fit_label_to_width(
 func _song_primary(song: Dictionary) -> Color:
 	var colors_value: Variant = song.get("colors", {})
 	if colors_value is Dictionary:
-		return (colors_value as Dictionary).get("primary", Color(0.05, 0.92, 1.0, 1.0))
-	return Color(0.05, 0.92, 1.0, 1.0)
+		return TAP_PALETTE.vivid_theme(
+			(colors_value as Dictionary).get("primary", TAP_PALETTE.TAP_CYAN)
+		)
+	return TAP_PALETTE.TAP_CYAN
 
 
 func _song_accent(song: Dictionary) -> Color:
 	var colors_value: Variant = song.get("colors", {})
 	if colors_value is Dictionary:
-		return (colors_value as Dictionary).get("accent", Color(1.0, 0.84, 0.05, 1.0))
-	return Color(1.0, 0.84, 0.05, 1.0)
+		return TAP_PALETTE.vivid_theme(
+			(colors_value as Dictionary).get("accent", TAP_PALETTE.TAP_YELLOW)
+		)
+	return TAP_PALETTE.TAP_YELLOW
 
 
 func _dark_color() -> Color:

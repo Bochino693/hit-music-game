@@ -6,9 +6,10 @@ extends "res://scripts/hit_music_r7/stage_v11.gd"
 ##
 ## Este arquivo publica o ÚNICO quadro MULTI das 8 lanes.
 
+const GAMEPLAY_TAP_PALETTE: Script = preload("res://scripts/hit_music_r7/tap_palette.gd")
 const LED_PRELIGHT_SECONDS: float = 1.18
 const LED_LATE_SECONDS: float = 0.18
-const HOLD_COLOR: Color = Color(1.0, 0.82, 0.06, 1.0)
+const HOLD_COLOR: Color = GAMEPLAY_TAP_PALETTE.HOLD_YELLOW
 
 var _r21_was_playing: bool = false
 

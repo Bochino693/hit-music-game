@@ -1,6 +1,7 @@
 extends Node2D
 
 const TAZO_SCENE: PackedScene = preload("res://entities/tazo.tscn")
+const TAP_PALETTE: Script = preload("res://scripts/hit_music_r7/tap_palette.gd")
 
 var origin: Vector2 = Vector2.ZERO
 var target: Vector2 = Vector2.ZERO
@@ -101,7 +102,7 @@ func _draw() -> void:
 	var ring_radius: float = 76.0 + pulse * 6.0
 
 	# Nucleo em gradiente suave no lugar do preenchimento solido chapado.
-	_draw_energy_glow(Vector2.ZERO, ring_radius * 0.68, _visual_color, 0.24 + pulse * 0.05)
+	_draw_energy_glow(Vector2.ZERO, ring_radius * 0.72, _visual_color, 0.34 + pulse * 0.08)
 
 	# Linha do anel mais fina e nitida — o brilho ja vem do gradiente acima,
 	# entao o traco nao precisa ser grosso para ler como "energetico".
@@ -111,8 +112,8 @@ func _draw() -> void:
 		0.0,
 		TAU,
 		56,
-		Color(_visual_color.r, _visual_color.g, _visual_color.b, 0.55),
-		2.2,
+		Color(_visual_color.r, _visual_color.g, _visual_color.b, 0.88),
+		2.8,
 		true
 	)
 	draw_arc(
@@ -144,8 +145,8 @@ func _draw() -> void:
 		draw_line(
 			inner,
 			outer,
-			Color(_visual_color.r, _visual_color.g, _visual_color.b, 0.48),
-			1.6,
+			Color(_visual_color.r, _visual_color.g, _visual_color.b, 0.72),
+			1.9,
 			true
 		)
 
@@ -175,13 +176,7 @@ func _draw_energy_glow(
 
 
 func _frame_color(index: int) -> Color:
-	match index:
-		1:
-			return Color(1.0, 0.84, 0.08, 1.0)
-		2:
-			return Color(1.0, 0.14, 0.45, 1.0)
-		_:
-			return Color(0.08, 0.92, 1.0, 1.0)
+	return TAP_PALETTE.color_for_index(index)
 
 
 func _find_sprite(node: Node) -> AnimatedSprite2D:
