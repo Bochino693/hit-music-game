@@ -347,9 +347,11 @@ func _draw_theme_geometry() -> void:
 				size * 2.35,
 				color,
 				(intensity * 0.6 + reaction * 0.30) * (0.5 + beat * 0.3),
-				3
+				2
 			)
 
+			# 8 fundos distintos, um por musica: cada shape/leitura muda
+			# bastante a personalidade da tela sem precisar de arte nova.
 			match configured_pattern:
 				"hex":
 					_draw_regular_polygon(
@@ -376,6 +378,50 @@ func _draw_theme_geometry() -> void:
 						angle + PI * 0.25,
 						color,
 						maxf(1.5, radius * 0.0028)
+					)
+				"spiral":
+					# Lamina fina em rotacao acentuada — leitura de
+					# redemoinho/espiral (Naruto/Uzumaki).
+					_draw_regular_polygon(
+						position_value,
+						size * 0.95,
+						3,
+						angle + rotation * 0.85,
+						color,
+						maxf(1.5, radius * 0.0026)
+					)
+				"waves":
+					# Traco tangencial ao circulo — le como crista de onda.
+					var tangent_dir := Vector2(-direction.y, direction.x)
+					draw_line(
+						position_value - tangent_dir * size * 0.95,
+						position_value + tangent_dir * size * 0.95,
+						color,
+						maxf(2.0, radius * 0.0032),
+						true
+					)
+				"orbits":
+					# Aneis finos no lugar de formas solidas — leitura de
+					# orbitas/particulas magneticas.
+					draw_arc(
+						position_value,
+						size * 0.62,
+						0.0,
+						TAU,
+						14,
+						color,
+						maxf(1.5, radius * 0.0026),
+						true
+					)
+				"shards":
+					# Estilhacos triangulares alongados — leitura cristalina.
+					_draw_regular_polygon(
+						position_value,
+						size * 1.30,
+						3,
+						angle + PI * 0.5,
+						color,
+						maxf(1.5, radius * 0.0030)
 					)
 				_:
 					_draw_rotated_diamond(
@@ -419,7 +465,7 @@ func _draw_theme_geometry() -> void:
 			radius * (0.070 + beat * 0.010),
 			primary,
 			0.14 + reaction * 0.10,
-			3
+			2
 		)
 		_draw_rotated_diamond(
 			petal_position,
@@ -429,7 +475,7 @@ func _draw_theme_geometry() -> void:
 			maxf(2.0, radius * 0.0040)
 		)
 
-	_draw_soft_glow(center, radius * 0.135, secondary, 0.10 + reaction * 0.10, 3)
+	_draw_soft_glow(center, radius * 0.135, secondary, 0.10 + reaction * 0.10, 2)
 	_draw_regular_polygon(
 		center,
 		radius * (0.095 + beat * 0.008),
@@ -457,7 +503,7 @@ func _draw_ambient_particles() -> void:
 	var time_value: float = _idle_time()
 	var beat: float = _beat_pulse()
 	var palette: Array[Color] = [_primary(), _secondary(), _accent()]
-	for index in range(36):
+	for index in range(28):
 		var seed: float = float(index) * 12.9898
 		var depth: float = 0.35 + float(index % 3) * 0.27
 		var base_angle: float = fmod(absf(sin(seed) * 43758.5453), TAU)
@@ -488,7 +534,7 @@ func _draw_ambient_particles() -> void:
 			size * 3.1,
 			particle_color,
 			0.055 + twinkle * 0.075,
-			3
+			2
 		)
 		draw_circle(
 			particle_position,
@@ -924,7 +970,7 @@ func _draw_capsule(
 	)
 
 	# Barras deslizantes deixam a direcao evidente sem criar poluicao visual.
-	var marker_count: int = clampi(int(length / maxf(half_width * 2.8, 1.0)), 3, 12)
+	var marker_count: int = clampi(int(length / maxf(half_width * 2.8, 1.0)), 3, 8)
 	var phase: float = fmod(_idle_time() * (1.7 if active else 0.75), 1.0)
 	for index in range(marker_count):
 		var marker_t: float = fmod((float(index) + phase) / float(marker_count), 1.0)
@@ -1161,7 +1207,7 @@ func _draw_star(
 
 	# Brilho por tras da estrela — da mais definicao/profundidade em
 	# vez de so linhas finas sobre o fundo.
-	_draw_soft_glow(position_value, size * 1.55, color, 0.34 + pulse * 0.12, 4)
+	_draw_soft_glow(position_value, size * 1.55, color, 0.34 + pulse * 0.12, 3)
 
 	draw_polyline(outer, Color(0.0, 0.0, 0.0, 0.90), maxf(12.0, size * 0.30), true)
 	draw_polyline(outer, Color.WHITE, maxf(7.0, size * 0.16), true)
@@ -1212,7 +1258,7 @@ func _draw_tap_prism(
 	var flash_radius: float = radius * (
 		0.055 + progress * 0.190
 	)
-	_draw_soft_glow(position_value, flash_radius * 1.9, color, life * 0.55, 5)
+	_draw_soft_glow(position_value, flash_radius * 1.9, color, life * 0.55, 4)
 	draw_circle(
 		position_value,
 		flash_radius,
@@ -1298,7 +1344,7 @@ func _draw_slide_burst(
 		radius * (0.13 + progress * 0.20),
 		color,
 		life * 0.50,
-		4
+		3
 	)
 
 	for layer in range(4):
@@ -1341,15 +1387,19 @@ func _draw_hold_burst(
 		float(Time.get_ticks_msec()) / 1000.0 * 1.8
 	)
 
+	# Camadas reduzidas (eram 5 poligonos + 8 cristais + glow de 5
+	# camadas): o burst de HOLD e o que mais pesava por acontecer bem
+	# na transicao pro efeito de acerto, que era onde o travamento
+	# ficava mais visivel. Menos camadas, mesma leitura de "portal".
 	_draw_soft_glow(
 		position_value,
 		radius * (0.15 + progress * 0.22),
 		color,
 		life * 0.55,
-		5
+		3
 	)
 
-	for layer in range(5):
+	for layer in range(3):
 		var size: float = radius * (
 			0.075
 			+ float(layer) * 0.044
@@ -1373,10 +1423,10 @@ func _draw_hold_burst(
 			maxf(3.0, radius * (0.013 - float(layer) * 0.0013))
 		)
 
-	for index in range(8):
+	for index in range(6):
 		var angle: float = (
 			rotation_value * 0.55
-			+ TAU * float(index) / 8.0
+			+ TAU * float(index) / 6.0
 		)
 		var direction: Vector2 = Vector2(
 			cos(angle),

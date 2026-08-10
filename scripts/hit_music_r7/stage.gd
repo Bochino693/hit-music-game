@@ -40,6 +40,17 @@ const PRESENTATION_SECONDS: float = 2.70
 const COUNTDOWN_SECONDS: float = 3.0
 const RESULT_SECONDS: float = 12.0
 const RECORD_PATH: String = "user://hit_music_records.json"
+const GAME_OVER_STING_PATH: String = "res://songs/game_over.mp3"
+
+const MUSIC_VOLUME_MIN_DB: float = -16.0
+const MUSIC_VOLUME_MAX_DB: float = -1.0
+const MUSIC_VOLUME_COMBO_FOR_MAX: float = 10.0
+const MUSIC_VOLUME_SMOOTH_SPEED: float = 2.4
+
+# Mesmo amarelo usado na fita do hold (playfield_renderer._draw_hold)
+# e no LED fisico (HOLD_COLOR em stage_final.gd) — o hold e sempre
+# essa cor, nunca a cor de destaque da musica.
+const HOLD_VISUAL_COLOR: Color = Color(1.0, 0.83, 0.08, 1.0)
 
 var _song: Dictionary = {}
 var _difficulty_name: String = "easy"
@@ -144,6 +155,7 @@ func _process(delta: float) -> void:
 			_update_tap_visuals()
 			_update_notes_and_misses()
 			_update_hud()
+			_update_dynamic_volume(delta)
 			if _song_time >= _song_duration - 0.02:
 				_finish_game(false)
 		GameState.RESULT:
@@ -338,9 +350,12 @@ func _build_hud() -> void:
 	_countdown_label.visible = false
 	_hud_layer.add_child(_countdown_label)
 
+	# Painel maior e com mais espaco reservado pros detalhes/ranking:
+	# antes o texto (nome, hits/misses, cabecalho + linhas do ranking)
+	# nao cabia na area reservada e vazava pra fora do painel.
 	_result_panel = Panel.new()
-	_result_panel.position = _center - Vector2(_radius * 0.56, _radius * 0.40)
-	_result_panel.size = Vector2(_radius * 1.12, _radius * 0.80)
+	_result_panel.position = _center - Vector2(_radius * 0.56, _radius * 0.49)
+	_result_panel.size = Vector2(_radius * 1.12, _radius * 0.98)
 	_result_panel.visible = false
 	_result_panel.add_theme_stylebox_override("panel", _result_panel_style())
 	_hud_layer.add_child(_result_panel)
@@ -356,9 +371,9 @@ func _build_hud() -> void:
 	_result_score.add_theme_color_override("font_color", _accent_color())
 	_result_panel.add_child(_result_score)
 
-	_result_details = _make_label("", int(_radius * 0.038), HORIZONTAL_ALIGNMENT_CENTER, font)
+	_result_details = _make_label("", int(_radius * 0.032), HORIZONTAL_ALIGNMENT_CENTER, font)
 	_result_details.position = Vector2(_radius * 0.06, _radius * 0.45)
-	_result_details.size = Vector2(_result_panel.size.x - _radius * 0.12, _radius * 0.25)
+	_result_details.size = Vector2(_result_panel.size.x - _radius * 0.12, _radius * 0.42)
 	_result_details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_result_panel.add_child(_result_details)
 
@@ -490,6 +505,35 @@ func _update_song_time() -> void:
 	value += AudioServer.get_time_since_last_mix()
 	value -= AudioServer.get_output_latency()
 	_song_time = clampf(value, 0.0, _song_duration)
+
+
+## A musica "respira" com o desempenho do jogador: fica mais cheia
+## conforme ele mantem os acertos em sequencia e abafa assim que erra
+## (combo cai pra 0) — feedback de audio que existia antes e se
+## perdeu nos refinos. O volume desliza suavemente (nao troca de
+## patamar de golpe) pra nao soar como um corte abrupto.
+func _update_dynamic_volume(delta: float) -> void:
+	if _music_player == null or not _music_player.playing:
+		return
+
+	# Antes do primeiro julgamento (ainda nao acertou nem errou nada)
+	# a musica toca no volume normal. So depois que o jogador comeca a
+	# ser avaliado o volume passa a acompanhar o combo atual.
+	var target_db: float = MUSIC_VOLUME_MAX_DB
+	if _judgement_count > 0:
+		var combo_ratio: float = clampf(
+			float(_combo) / MUSIC_VOLUME_COMBO_FOR_MAX,
+			0.0,
+			1.0
+		)
+		target_db = lerpf(
+			MUSIC_VOLUME_MIN_DB,
+			MUSIC_VOLUME_MAX_DB,
+			combo_ratio
+		)
+
+	var rate: float = clampf(delta * MUSIC_VOLUME_SMOOTH_SPEED, 0.0, 1.0)
+	_music_player.volume_db = lerpf(_music_player.volume_db, target_db, rate)
 
 
 func _spawn_due_events() -> void:
@@ -975,7 +1019,9 @@ func _judgement_color(kind: String, quality: float) -> Color:
 func _event_color(event: Dictionary) -> Color:
 	var type_name: String = str(event.get("type", "tap"))
 	if type_name == "hold":
-		return _accent_color()
+		# Hold e sempre amarelo — mesma cor da fita/capsula desenhada
+		# (_draw_capsule) e do LED fisico (HOLD_COLOR em stage_final.gd).
+		return HOLD_VISUAL_COLOR
 	if type_name == "slide":
 		return _primary_color()
 	return _tap_color(int(event.get("color_index", 0)))
@@ -992,7 +1038,6 @@ func _finish_game(failed: bool) -> void:
 	_video_player.visible = false
 	_countdown_label.visible = false
 	_set_gameplay_hud_visible(false)
-	_result_panel.visible = true
 
 	var score: float = _score_percent()
 	_result_title.text = "TRACK FAILED" if failed else "TRACK CLEAR"
@@ -1003,6 +1048,38 @@ func _finish_game(failed: bool) -> void:
 	)
 	_save_record(score)
 	LED_CLIENT.clear_all()
+
+	_play_game_over_sting()
+	_reveal_result_panel()
+
+
+func _play_game_over_sting() -> void:
+	# Marca sonoramente o fim da partida antes do modal aparecer.
+	if not ResourceLoader.exists(GAME_OVER_STING_PATH):
+		return
+	var sting_resource: Resource = load(GAME_OVER_STING_PATH)
+	if not sting_resource is AudioStream:
+		return
+	_music_player.stream = sting_resource as AudioStream
+	_music_player.volume_db = -1.0
+	_music_player.play()
+
+
+func _reveal_result_panel() -> void:
+	# Entrada suave (fade + leve escala) em vez do painel aparecer de
+	# repente — junto com o sting de game over, deixa claro que a
+	# partida terminou, sem susto/corte seco.
+	_result_panel.visible = true
+	_result_panel.modulate.a = 0.0
+	_result_panel.pivot_offset = _result_panel.size * 0.5
+	_result_panel.scale = Vector2(0.94, 0.94)
+
+	var tween: Tween = create_tween()
+	tween.set_parallel(true)
+	tween.set_trans(Tween.TRANS_QUINT)
+	tween.set_ease(Tween.EASE_OUT)
+	tween.tween_property(_result_panel, "modulate:a", 1.0, 0.50)
+	tween.tween_property(_result_panel, "scale", Vector2.ONE, 0.50)
 
 
 func _update_hud() -> void:
@@ -1134,14 +1211,18 @@ func _dark_color() -> Color:
 	return Color(0.01, 0.02, 0.05, 1.0)
 
 
+## Mesmo mapeamento de tap_visual.gd._frame_color(): o LED fisico da
+## lane precisa acender exatamente na cor que o tazo mostra quando
+## chega no lugar, nao numa cor de tema independente da musica (era
+## isso que ficava dessincronizado antes).
 func _tap_color(index: int) -> Color:
 	match index % 3:
-		0:
-			return _accent_color()
 		1:
-			return _primary_color()
+			return Color(1.0, 0.84, 0.08, 1.0)
+		2:
+			return Color(1.0, 0.14, 0.45, 1.0)
 		_:
-			return Color(1.0, 0.18, 0.55, 1.0)
+			return Color(0.08, 0.92, 1.0, 1.0)
 
 
 func _load_font() -> Font:

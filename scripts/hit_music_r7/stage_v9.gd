@@ -7,6 +7,10 @@ const CHART_FACTORY_V9: Script = preload(
 const ERROR_LIMIT_RATIO: float = 0.30
 const DEFAULT_PLAYER_NAME: String = "PLAYER 1"
 const RANKING_LIMIT: int = 10
+# So os 3 melhores aparecem no modal final — a area reservada pro
+# texto de resultado e pequena, e com todos os 10 guardados (usados
+# so pro arquivo de recordes) o texto vazava pra fora do painel.
+const TOP_RANKING_DISPLAY: int = 3
 
 var _difficulty_confirmed: bool = false
 var _missed_time: float = 0.0
@@ -518,6 +522,12 @@ func _update_hud() -> void:
 
 	_center_score.text = "%.2f%%" % _score_percent()
 	_center_combo.text = "COMBO %d" % _combo
+	# O combo nao fica fixo na tela: so aparece a partir de 2 acertos
+	# seguidos (pra nao poluir com "COMBO 0"/"COMBO 1" o tempo todo) e
+	# vai auto-somando ate o proximo erro, quando some de novo. O
+	# maximo (_max_combo) continua sendo contabilizado por baixo dos
+	# panos e aparece no resultado final.
+	_center_combo.visible = _combo >= 2
 	_center_combo.add_theme_color_override(
 		"font_color",
 		_accent_color() if _combo > 0 else Color.WHITE
@@ -683,7 +693,7 @@ func _ranking_text() -> String:
 
 	var ranking: Array = list_value as Array
 	var lines: Array[String] = ["RANKING " + key.to_upper()]
-	var count: int = mini(ranking.size(), 5)
+	var count: int = mini(ranking.size(), TOP_RANKING_DISPLAY)
 
 	for index in range(count):
 		var item_value: Variant = ranking[index]

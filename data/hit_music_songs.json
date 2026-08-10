@@ -10,7 +10,7 @@
       "bpm": 174.0,
       "chart_start": 4.2,
       "seed": 1101,
-      "pattern": "diamonds",
+      "pattern": "shards",
       "colors": {
         "primary": "#F40730",
         "secondary": "#FFFFFF",
@@ -294,7 +294,7 @@
       "bpm": 135.0,
       "chart_start": 4.0,
       "seed": 3303,
-      "pattern": "hex",
+      "pattern": "waves",
       "colors": {
         "primary": "#16E0B8",
         "secondary": "#FF3A64",
@@ -436,7 +436,7 @@
       "bpm": 160.0,
       "chart_start": 4.0,
       "seed": 4404,
-      "pattern": "grid",
+      "pattern": "orbits",
       "colors": {
         "primary": "#FF4CD8",
         "secondary": "#58F3FF",
@@ -578,7 +578,7 @@
       "bpm": 164.0,
       "chart_start": 4.0,
       "seed": 5505,
-      "pattern": "radial",
+      "pattern": "spiral",
       "colors": {
         "primary": "#FF7A00",
         "secondary": "#2D9CFF",
@@ -720,7 +720,7 @@
       "bpm": 128.0,
       "chart_start": 4.0,
       "seed": 6606,
-      "pattern": "hex",
+      "pattern": "grid",
       "colors": {
         "primary": "#4CFF55",
         "secondary": "#47E9FF",
@@ -863,7 +863,7 @@
       "bpm": 152.0,
       "chart_start": 4.0,
       "seed": 7707,
-      "pattern": "diamonds",
+      "pattern": "hex",
       "colors": {
         "primary": "#FF263F",
         "secondary": "#FFFFFF",
