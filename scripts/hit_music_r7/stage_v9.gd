@@ -445,6 +445,15 @@ func _resolve_miss(event: Dictionary) -> void:
 		position_value,
 		Color(1.0, 0.12, 0.16, 1.0)
 	)
+	# Flash vermelho, curto, so na lane errada — diferente dos flashes
+	# de acerto (que duram mais e sao mais fortes), pra nao poluir a
+	# leitura da proxima nota que ja esta chegando naquela posicao.
+	_renderer.flash_ring_at(
+		position_value,
+		Color(1.0, 0.16, 0.20, 1.0),
+		0.70,
+		5.4
+	)
 	_remove_tap_node(event)
 	_clear_event_led(event)
 

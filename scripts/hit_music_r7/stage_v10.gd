@@ -213,10 +213,12 @@ func _set_gameplay_hud_visible(value: bool) -> void:
 
 func _handle_lane_press(
 	lane: int,
-	source: String
+	source: String,
+	has_pointer: bool = false,
+	press_position: Vector2 = Vector2.ZERO
 ) -> void:
 	LED_CLIENT.pulse_lane(lane)
-	super._handle_lane_press(lane, source)
+	super._handle_lane_press(lane, source, has_pointer, press_position)
 
 
 func _resolve_hit(

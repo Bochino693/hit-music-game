@@ -53,6 +53,18 @@ var _last_ui_state: String = ""
 var _last_game_state: String = ""
 var _seq: int = 0
 
+## Fila de escrita assincrona. As chamadas de gameplay (hit/miss/troca de
+## lane) nunca tocam disco na thread principal: elas so atualizam
+## _pending e sinalizam a thread de escrita. Isso elimina o
+## travamento perceptivel que acontecia sempre que um tazo trocava
+## para o efeito de acerto (a escrita sincrona + retry com
+## OS.delay_msec rodava direto no frame do jogo).
+var _pending: Dictionary = {}
+var _pending_mutex: Mutex = Mutex.new()
+var _pending_semaphore: Semaphore = Semaphore.new()
+var _writer_thread: Thread = null
+var _writer_running: bool = true
+
 
 func _ready() -> void:
 	DirAccess.make_dir_recursive_absolute(
@@ -67,6 +79,11 @@ func _ready() -> void:
 	)
 
 	_bridge_path = _resolve_bridge_path()
+
+	_writer_running = true
+	_writer_thread = Thread.new()
+	_writer_thread.start(Callable(self, "_writer_loop"))
+
 	set_process(true)
 	ensure_bridge()
 
@@ -327,6 +344,19 @@ func shutdown() -> void:
 
 func _exit_tree() -> void:
 	shutdown()
+	_stop_writer_thread()
+
+
+func _stop_writer_thread() -> void:
+	if _writer_thread == null:
+		return
+	_pending_mutex.lock()
+	_writer_running = false
+	_pending_mutex.unlock()
+	_pending_semaphore.post()
+	if _writer_thread.is_started():
+		_writer_thread.wait_to_finish()
+	_writer_thread = null
 
 
 func _write_ui_state(cmd: String) -> bool:
@@ -536,6 +566,41 @@ func _write_atomic(
 	final_path: String,
 	content: String
 ) -> bool:
+	# Nunca toca disco aqui: apenas registra a ultima versao desejada
+	# desse arquivo e acorda a thread de escrita. Chamadas repetidas
+	# no mesmo frame (ex.: varias lanes mudando de cor no mesmo hit)
+	# colapsam automaticamente em uma unica escrita com o conteudo
+	# mais recente, em vez de empilhar I/O bloqueante no frame do jogo.
+	_pending_mutex.lock()
+	_pending[final_path] = content
+	_pending_mutex.unlock()
+	_pending_semaphore.post()
+	return true
+
+
+func _writer_loop() -> void:
+	while true:
+		_pending_semaphore.wait()
+
+		_pending_mutex.lock()
+		var running: bool = _writer_running
+		var batch: Dictionary = _pending.duplicate()
+		_pending.clear()
+		_pending_mutex.unlock()
+
+		for final_path in batch.keys():
+			_write_atomic_blocking(str(final_path), str(batch[final_path]))
+
+		if not running:
+			return
+
+
+func _write_atomic_blocking(
+	final_path: String,
+	content: String
+) -> bool:
+	# So roda dentro de _writer_loop, na thread de background: pode
+	# bloquear e usar OS.delay_msec livremente sem afetar o frame rate.
 	var tmp := (
 		final_path
 		+ ".tmp_%d_%d"

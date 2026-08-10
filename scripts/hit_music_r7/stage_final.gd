@@ -14,8 +14,16 @@ var _r21_was_playing: bool = false
 
 
 func _ready() -> void:
-	Engine.max_fps = 160
 	super._ready()
+
+	# stage.gd/stage_v9/stage_v10/stage_v11 tentam limitar o FPS em
+	# cascata (60 -> 120 -> 144) dentro de _ready(), mas como cada
+	# _ready() chama super._ready() ANTES de aplicar seu proprio valor,
+	# quem "vence" e o mais base da cadeia (stage.gd = 60), nao o mais
+	# derivado. Aplicar aqui, depois de todo o super._ready() ja ter
+	# rodado, garante que o jogo realmente rode a 160 FPS: movimento
+	# mais fluido e responsivo, sem o teto de 60 escondido.
+	Engine.max_fps = 160
 
 	# Remove overlay antigo como já fazia a versão final.
 	if _theme_overlay_v11 != null:

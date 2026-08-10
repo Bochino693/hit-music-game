@@ -18,6 +18,15 @@ var effects: Array = []
 var _hit_energy: float = 0.0
 var _combo_energy: float = 0.0
 
+# Feedback colorido por lane na linha de encaixe (o "ring"). Antes a
+# linha e as bolinhas de cada lane eram sempre brancas, sem relacao
+# com o que foi acertado. Agora cada lane guarda uma energia de flash
+# que "acende" na cor do julgamento (perfect/good/hold/slide/miss) e
+# decai suavemente — um efeito diferente para cada tipo de acerto.
+var _lane_flash_colors: Array = []
+var _lane_flash_energy: Array = []
+var _lane_flash_decay: Array = []
+
 var _video_style: StyleBoxFlat
 var _video_inner_style: StyleBoxFlat
 
@@ -36,6 +45,14 @@ func _ready() -> void:
 	_video_inner_style.border_color = Color(1.0, 1.0, 1.0, 0.15)
 	_video_inner_style.set_border_width_all(1)
 	_video_inner_style.set_corner_radius_all(19)
+
+	_lane_flash_colors.clear()
+	_lane_flash_energy.clear()
+	_lane_flash_decay.clear()
+	for _lane in range(8):
+		_lane_flash_colors.append(Color.WHITE)
+		_lane_flash_energy.append(0.0)
+		_lane_flash_decay.append(3.2)
 
 
 func configure(
@@ -97,16 +114,55 @@ func register_hit(quality: float, combo: int) -> void:
 	queue_redraw()
 
 
+## Acende a lane mais proxima de position_value com a cor do
+## julgamento (PERFECT, GOOD, HOLD, SLIDE ou MISS). intensity controla
+## o quao forte o flash comeca e decay_speed controla quao rapido ele
+## apaga — assim cada tipo de acerto tem uma assinatura visual propria
+## na propria linha de encaixe, nao so no burst central.
+func flash_ring_at(
+	position_value: Vector2,
+	color: Color,
+	intensity: float = 1.0,
+	decay_speed: float = 3.2
+) -> void:
+	var lane: int = _nearest_lane_index(position_value)
+	if lane < 0 or lane >= _lane_flash_energy.size():
+		return
+	_lane_flash_colors[lane] = color
+	_lane_flash_energy[lane] = clampf(float(_lane_flash_energy[lane]) + intensity, 0.0, 1.6)
+	_lane_flash_decay[lane] = decay_speed
+	queue_redraw()
+
+
+func _nearest_lane_index(position_value: Vector2) -> int:
+	var best_lane: int = -1
+	var best_distance: float = INF
+	for lane in range(lane_positions.size()):
+		var distance_value: float = lane_positions[lane].distance_to(position_value)
+		if distance_value < best_distance:
+			best_distance = distance_value
+			best_lane = lane
+	return best_lane
+
+
 func _process(delta: float) -> void:
 	_hit_energy = move_toward(_hit_energy, 0.0, delta * 2.65)
 	_combo_energy = move_toward(_combo_energy, 0.0, delta * 0.16)
+
+	var lane_flash_active: bool = false
+	for lane in range(_lane_flash_energy.size()):
+		var energy: float = float(_lane_flash_energy[lane])
+		if energy > 0.0:
+			_lane_flash_energy[lane] = move_toward(energy, 0.0, delta * float(_lane_flash_decay[lane]))
+			lane_flash_active = true
+
 	var now: float = float(Time.get_ticks_msec()) / 1000.0
 	for index in range(effects.size() - 1, -1, -1):
 		var effect: Dictionary = effects[index]
 		if now - float(effect.get("start", now)) >= float(effect.get("duration", 0.5)):
 			effects.remove_at(index)
 
-	if not effects.is_empty() or game_state == "playing" or game_state == "selector":
+	if not effects.is_empty() or lane_flash_active or game_state == "playing" or game_state == "selector":
 		queue_redraw()
 
 
@@ -547,13 +603,46 @@ func _draw_ring() -> void:
 	for lane_index in range(lane_positions.size()):
 		var position_value: Vector2 = lane_positions[lane_index]
 		var lane_pulse: float = reaction * (0.5 + 0.5 * sin(_idle_time() * 7.0 + float(lane_index)))
+
+		var flash: float = 0.0
+		var flash_color: Color = Color.WHITE
+		if lane_index < _lane_flash_energy.size():
+			flash = clampf(float(_lane_flash_energy[lane_index]), 0.0, 1.6)
+			flash_color = _lane_flash_colors[lane_index]
+		var flash_mix: float = minf(flash, 1.0)
+
+		var glow_color: Color = primary.lerp(flash_color, flash_mix)
 		draw_circle(
 			position_value,
-			marker_radius * (1.75 + lane_pulse * 0.55),
-			Color(primary.r, primary.g, primary.b, 0.08 + lane_pulse * 0.18),
+			marker_radius * (1.75 + lane_pulse * 0.55 + flash * 0.90),
+			Color(glow_color.r, glow_color.g, glow_color.b, 0.08 + lane_pulse * 0.18 + flash_mix * 0.52),
 			true
 		)
-		draw_circle(position_value, marker_radius * (1.0 + lane_pulse * 0.16), Color.WHITE, true)
+
+		var core_color: Color = Color.WHITE.lerp(flash_color, minf(flash * 1.4, 1.0))
+		draw_circle(
+			position_value,
+			marker_radius * (1.0 + lane_pulse * 0.16 + flash * 0.32),
+			core_color,
+			true
+		)
+
+		if flash > 0.02:
+			# Arco de energia correndo pela linha, saindo do ponto
+			# onde o tazo se encaixou — a assinatura visual do acerto
+			# fica na propria linha, nao so num flash central.
+			var arc_span: float = deg_to_rad(9.0 + flash * 30.0)
+			var base_angle: float = (position_value - center).angle()
+			draw_arc(
+				center,
+				ring_radius,
+				base_angle - arc_span,
+				base_angle + arc_span,
+				20,
+				Color(flash_color.r, flash_color.g, flash_color.b, flash_mix * 0.85),
+				width * (1.5 + flash * 2.1),
+				true
+			)
 
 
 
@@ -735,6 +824,14 @@ func _draw_slide(event: Dictionary) -> void:
 	if points.size() < 2:
 		return
 
+	# Comprimento acumulado pre-calculado em _prepare_chart(): evita
+	# recalcular a soma de distancias do trajeto inteiro a cada
+	# chamada de point_at/tangent_at (estrela, fantasmas, cada seta) —
+	# era o principal motivo do arrasto pesar quando havia varios
+	# arrastos ativos na tela.
+	var lengths_value: Variant = event.get("_path_lengths", {})
+	var lengths: Dictionary = lengths_value if lengths_value is Dictionary else {}
+
 	var hit_time: float = float(event.get("time", 0.0))
 	var end_time: float = float(event.get("end_time", hit_time + 1.0))
 	var approach: float = float(difficulty.get("approach", 1.0))
@@ -748,7 +845,7 @@ func _draw_slide(event: Dictionary) -> void:
 	var arrows_from: float = visual_progress if active else 0.0
 
 	_draw_slide_rail(points, color)
-	_draw_chevrons(points, arrows_from, color, accent)
+	_draw_chevrons(points, lengths, arrows_from, color, accent)
 
 	var star_position: Vector2
 	var tangent: Vector2
@@ -765,14 +862,14 @@ func _draw_slide(event: Dictionary) -> void:
 		tangent = (points[0] - center).normalized()
 		star_progress = 0.0
 	else:
-		star_position = PATH_BUILDER.point_at(points, visual_progress)
-		tangent = PATH_BUILDER.tangent_at(points, visual_progress)
+		star_position = PATH_BUILDER.point_at_cached(points, lengths, visual_progress)
+		tangent = PATH_BUILDER.tangent_at_cached(points, lengths, visual_progress)
 
 	if active:
 		for ghost_index in range(1, 4):
 			var ghost_progress: float = maxf(0.0, star_progress - float(ghost_index) * 0.035)
-			var ghost_position: Vector2 = PATH_BUILDER.point_at(points, ghost_progress)
-			var ghost_tangent: Vector2 = PATH_BUILDER.tangent_at(points, ghost_progress)
+			var ghost_position: Vector2 = PATH_BUILDER.point_at_cached(points, lengths, ghost_progress)
+			var ghost_tangent: Vector2 = PATH_BUILDER.tangent_at_cached(points, lengths, ghost_progress)
 			_draw_star(
 				ghost_position,
 				ghost_tangent.angle(),
@@ -810,22 +907,24 @@ func _draw_slide_rail(points: PackedVector2Array, color: Color) -> void:
 
 func _draw_chevrons(
 	points: PackedVector2Array,
+	lengths: Dictionary,
 	start_progress: float,
 	color: Color,
 	accent: Color
 ) -> void:
 	var spacing: float = radius * 0.052
-	var estimated_length: float = 0.0
-	for index in range(points.size() - 1):
-		estimated_length += points[index].distance_to(points[index + 1])
+	var estimated_length: float = float(lengths.get("total", 0.0))
+	if estimated_length <= 0.0:
+		for index in range(points.size() - 1):
+			estimated_length += points[index].distance_to(points[index + 1])
 
 	var count: int = maxi(5, int(ceil(estimated_length / maxf(spacing, 1.0))))
 	var start_index: int = clampi(int(floor(start_progress * float(count))), 0, count - 1)
 
 	for index in range(start_index, count):
 		var progress: float = (float(index) + 0.50) / float(count)
-		var position_value: Vector2 = PATH_BUILDER.point_at(points, progress)
-		var tangent: Vector2 = PATH_BUILDER.tangent_at(points, progress)
+		var position_value: Vector2 = PATH_BUILDER.point_at_cached(points, lengths, progress)
+		var tangent: Vector2 = PATH_BUILDER.tangent_at_cached(points, lengths, progress)
 		var mix_value: float = 0.10 + 0.18 * float(index % 3)
 		var arrow_color: Color = color.lerp(accent, mix_value)
 		_draw_chevron(position_value, tangent, radius * 0.058, arrow_color)

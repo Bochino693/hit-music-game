@@ -66,6 +66,67 @@ static func build(
 			return _sample_polyline(PackedVector2Array([start, finish]), 42)
 
 
+## Pre-calcula o comprimento acumulado do caminho uma unica vez.
+## point_at/tangent_at recalculavam essa soma (com distance_to + sqrt
+## por segmento) toda vez que eram chamadas — e eram chamadas varias
+## vezes por frame por nota de arrasto ativa (estrela, fantasmas do
+## rastro, cada seta/chevron). Em telas com varios arrastos isso pesa
+## bastante. Com o cache, o custo por frame cai de O(pontos) para O(1)
+## por amostra.
+static func build_lengths(points: PackedVector2Array) -> Dictionary:
+	var cumulative := PackedFloat32Array()
+	var total: float = 0.0
+	cumulative.append(0.0)
+	for index in range(points.size() - 1):
+		total += points[index].distance_to(points[index + 1])
+		cumulative.append(total)
+	return {"cumulative": cumulative, "total": total}
+
+
+static func point_at_cached(
+	points: PackedVector2Array,
+	lengths: Dictionary,
+	progress: float
+) -> Vector2:
+	if points.is_empty():
+		return Vector2.ZERO
+	if points.size() == 1:
+		return points[0]
+
+	var cumulative: PackedFloat32Array = lengths.get("cumulative", PackedFloat32Array())
+	var total: float = float(lengths.get("total", 0.0))
+	if cumulative.size() != points.size() or total <= 0.001:
+		return point_at(points, progress)
+
+	var target_distance: float = total * clampf(progress, 0.0, 1.0)
+	var low: int = 0
+	var high: int = cumulative.size() - 1
+	while low < high:
+		var mid: int = (low + high) / 2
+		if cumulative[mid] < target_distance:
+			low = mid + 1
+		else:
+			high = mid
+	var upper: int = maxi(low, 1)
+	var lower: int = upper - 1
+	var segment_length: float = maxf(cumulative[upper] - cumulative[lower], 0.001)
+	var local: float = clampf((target_distance - cumulative[lower]) / segment_length, 0.0, 1.0)
+	return points[lower].lerp(points[upper], local)
+
+
+static func tangent_at_cached(
+	points: PackedVector2Array,
+	lengths: Dictionary,
+	progress: float
+) -> Vector2:
+	if points.size() < 2:
+		return Vector2.RIGHT
+	var before: Vector2 = point_at_cached(points, lengths, maxf(progress - 0.008, 0.0))
+	var after: Vector2 = point_at_cached(points, lengths, minf(progress + 0.008, 1.0))
+	var tangent: Vector2 = after - before
+	return tangent.normalized() if tangent.length_squared() > 0.001 else Vector2.RIGHT
+
+
 static func point_at(points: PackedVector2Array, progress: float) -> Vector2:
 	if points.is_empty():
 		return Vector2.ZERO
@@ -105,27 +166,40 @@ static func tangent_at(points: PackedVector2Array, progress: float) -> Vector2:
 static func nearest_progress(
 	points: PackedVector2Array,
 	position_value: Vector2,
-	minimum_progress: float = 0.0
+	minimum_progress: float = 0.0,
+	max_forward_span: float = 1.0
 ) -> Dictionary:
 	if points.is_empty():
 		return {"progress": 0.0, "distance": INF}
 
+	var last_index: int = points.size() - 1
 	var start_index: int = clampi(
-		int(floor(clampf(minimum_progress, 0.0, 1.0) * float(points.size() - 1))) - 2,
+		int(floor(clampf(minimum_progress, 0.0, 1.0) * float(last_index))) - 2,
 		0,
-		points.size() - 1
+		last_index
 	)
+
+	# max_forward_span < 1.0 limita o quanto uma unica amostra pode
+	# "pular" para frente no caminho. Isso e o que impede o gesto de
+	# contar quando o dedo/mouse salta direto do inicio para o fim:
+	# cada amostra so pode avancar uma fatia pequena do progresso por
+	# vez, entao o percurso precisa ser realmente varrido.
+	var end_index: int = last_index
+	if max_forward_span < 1.0:
+		var span_steps: int = int(ceil(clampf(max_forward_span, 0.0, 1.0) * float(last_index))) + 2
+		end_index = clampi(start_index + span_steps, start_index, last_index)
+
 	var best_index: int = start_index
 	var best_distance: float = INF
 
-	for index in range(start_index, points.size()):
+	for index in range(start_index, end_index + 1):
 		var distance_value: float = points[index].distance_to(position_value)
 		if distance_value < best_distance:
 			best_distance = distance_value
 			best_index = index
 
 	return {
-		"progress": float(best_index) / float(maxi(points.size() - 1, 1)),
+		"progress": float(best_index) / float(maxi(last_index, 1)),
 		"distance": best_distance,
 	}
 

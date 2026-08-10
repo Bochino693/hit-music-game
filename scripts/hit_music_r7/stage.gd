@@ -26,6 +26,10 @@ const INPUT_ACTIONS: Array[String] = [
 	"input_h",
 ]
 
+const SLIDE_CORRIDOR_TOLERANCE_RATIO: float = 0.115
+const SLIDE_SAMPLE_STEP_RATIO: float = 0.045
+const SLIDE_MAX_FORWARD_SPAN: float = 0.16
+
 const TOP_MARGIN_RATIO: float = 0.022
 const TOP_HEIGHT_RATIO: float = 0.205
 const TOP_GAP_RATIO: float = 0.024
@@ -403,11 +407,16 @@ func _prepare_chart() -> void:
 		event["_holding"] = false
 		event["_visual_progress"] = 0.0
 		if str(event.get("type", "")) == "slide":
-			event["_path_points"] = PATH_BUILDER.build(
+			var path_points: PackedVector2Array = PATH_BUILDER.build(
 				event,
 				_center,
 				_radius,
 				_lane_positions
+			)
+			event["_path_points"] = path_points
+			event["_path_lengths"] = PATH_BUILDER.build_lengths(path_points)
+			event["_last_pointer"] = (
+				path_points[0] if path_points.size() > 0 else _center
 			)
 
 
@@ -636,7 +645,7 @@ func _handle_pointer_press(source: String, position_value: Vector2) -> void:
 	var lane: int = _nearest_lane(position_value)
 	if lane < 0:
 		return
-	_handle_lane_press(lane, source)
+	_handle_lane_press(lane, source, true, position_value)
 
 
 func _handle_pointer_move(source: String, position_value: Vector2) -> void:
@@ -657,23 +666,58 @@ func _handle_pointer_move(source: String, position_value: Vector2) -> void:
 		if not points_value is PackedVector2Array:
 			continue
 		var points: PackedVector2Array = points_value as PackedVector2Array
-		var current_progress: float = float(event.get("_visual_progress", 0.0))
+		if points.size() < 2:
+			continue
+
+		_advance_slide_progress(event, points, position_value)
+		event["_last_pointer"] = position_value
+
+		var progress: float = float(event.get("_visual_progress", 0.0))
+		if progress >= 0.965:
+			var end_position: Vector2 = PATH_BUILDER.point_at(points, 1.0)
+			_renderer.add_effect("slide", end_position, _primary_color())
+			_resolve_hit(event, "slide", 1.0)
+
+
+# O jogador precisa realmente varrer o caminho do arrasto. Antes, o
+# progresso era calculado projetando so a posicao ATUAL do ponteiro
+# sobre o trajeto inteiro - isso permitia "clicar no comeco e no fim"
+# (ou arrastar reto, cortando caminho) e o arrasto contar como
+# completo mesmo sem seguir o desenho. Agora a trajetoria entre a
+# ultima posicao conhecida do ponteiro e a posicao nova e amostrada em
+# pequenos passos; cada passo so avanca o progresso se cair dentro do
+# corredor do caminho (e um pouco a frente do que ja foi percorrido).
+# Assim que uma amostra sai do corredor o avanco para, entao pular
+# direto para o fim nao completa mais a nota.
+func _advance_slide_progress(
+	event: Dictionary,
+	points: PackedVector2Array,
+	position_value: Vector2
+) -> void:
+	var tolerance: float = _radius * SLIDE_CORRIDOR_TOLERANCE_RATIO
+	var step_size: float = maxf(_radius * SLIDE_SAMPLE_STEP_RATIO, 1.0)
+	var last_position: Vector2 = event.get("_last_pointer", position_value)
+	var current_progress: float = float(event.get("_visual_progress", 0.0))
+
+	var travel: float = last_position.distance_to(position_value)
+	var steps: int = clampi(int(ceil(travel / step_size)), 1, 96)
+
+	for step in range(1, steps + 1):
+		var sample: Vector2 = last_position.lerp(position_value, float(step) / float(steps))
 		var nearest: Dictionary = PATH_BUILDER.nearest_progress(
 			points,
-			position_value,
-			current_progress
+			sample,
+			current_progress,
+			SLIDE_MAX_FORWARD_SPAN
 		)
-		var distance_value: float = float(nearest.get("distance", INF))
-		if distance_value <= _radius * 0.115:
-			var next_progress: float = maxf(
-				current_progress,
-				float(nearest.get("progress", current_progress))
-			)
-			event["_visual_progress"] = next_progress
-			if next_progress >= 0.965:
-				var end_position: Vector2 = PATH_BUILDER.point_at(points, 1.0)
-				_renderer.add_effect("slide", end_position, _primary_color())
-				_resolve_hit(event, "slide", 1.0)
+		if float(nearest.get("distance", INF)) > tolerance:
+			break
+		current_progress = maxf(
+			current_progress,
+			float(nearest.get("progress", current_progress))
+		)
+
+	event["_visual_progress"] = current_progress
 
 
 func _handle_pointer_release(source: String, _position_value: Vector2) -> void:
@@ -698,12 +742,17 @@ func _handle_pointer_release(source: String, _position_value: Vector2) -> void:
 				_resolve_miss(event)
 
 
-func _handle_lane_press(lane: int, source: String) -> void:
+func _handle_lane_press(
+	lane: int,
+	source: String,
+	has_pointer: bool = false,
+	press_position: Vector2 = Vector2.ZERO
+) -> void:
 	if _try_tap(lane):
 		return
 	if _try_hold(lane, source):
 		return
-	_try_slide(lane, source)
+	_try_slide(lane, source, has_pointer, press_position)
 
 
 func _handle_lane_release(_lane: int, source: String) -> void:
@@ -783,7 +832,12 @@ func _try_hold(lane: int, source: String) -> bool:
 	return true
 
 
-func _try_slide(lane: int, source: String) -> bool:
+func _try_slide(
+	lane: int,
+	source: String,
+	has_pointer: bool = false,
+	press_position: Vector2 = Vector2.ZERO
+) -> bool:
 	var hit_window: float = float(_difficulty.get("hit_window", 0.20))
 	var best: Dictionary = {}
 	var best_difference: float = INF
@@ -816,6 +870,16 @@ func _try_slide(lane: int, source: String) -> bool:
 	best["_active"] = true
 	best["_source"] = source
 	best["_visual_progress"] = 0.0
+
+	# Ancora o inicio do corredor na posicao real do toque/clique
+	# quando existir (touch/mouse); em input fisico (botao) usa o
+	# proprio inicio do trajeto, ja que nao ha ponteiro na tela.
+	var start_point: Vector2 = _center
+	var points_value: Variant = best.get("_path_points", PackedVector2Array())
+	if points_value is PackedVector2Array and (points_value as PackedVector2Array).size() > 0:
+		start_point = (points_value as PackedVector2Array)[0]
+	best["_last_pointer"] = press_position if has_pointer else start_point
+
 	return true
 
 
@@ -833,6 +897,12 @@ func _resolve_hit(event: Dictionary, kind: String, quality: float) -> void:
 	elif kind == "hold":
 		effect_kind = "hold"
 	_renderer.add_effect(effect_kind, position_value, _event_color(event))
+	_renderer.flash_ring_at(
+		position_value,
+		_judgement_color(kind, quality),
+		0.95 + quality * 0.35,
+		3.1
+	)
 
 	_remove_tap_node(event)
 	_clear_event_led(event)
@@ -886,6 +956,20 @@ func _event_end_position(event: Dictionary) -> Vector2:
 			return (points_value as PackedVector2Array)[(points_value as PackedVector2Array).size() - 1]
 	var lane: int = clampi(int(event.get("lane", 0)), 0, NUM_LANES - 1)
 	return _lane_positions[lane]
+
+
+## Cor do flash que acende na linha de encaixe para cada tipo de
+## julgamento — antes a linha era sempre branca, sem diferenciar
+## PERFECT de GOOD nem de HOLD/SLIDE.
+func _judgement_color(kind: String, quality: float) -> Color:
+	if kind == "hold":
+		return _accent_color()
+	if kind == "slide":
+		return _primary_color()
+	# tap: PERFECT fica branco-gelo (nitido), GOOD fica na cor de destaque.
+	if quality >= 0.99:
+		return _secondary_color().lerp(_primary_color(), 0.30)
+	return _accent_color()
 
 
 func _event_color(event: Dictionary) -> Color:

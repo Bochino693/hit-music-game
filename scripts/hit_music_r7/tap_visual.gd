@@ -31,6 +31,14 @@ func _ready() -> void:
 		_sprite.centered = true
 		_sprite.position = Vector2.ZERO
 
+	# So o brilho desenhado em _draw() usa blend aditivo (a sprite do
+	# tazo continua normal): isso troca a leitura de "contorno solido
+	# grosso" por um brilho de energia que se soma a luz do fundo,
+	# igual ao efeito neon usado em arcades de ritmo modernos.
+	var glow_material := CanvasItemMaterial.new()
+	glow_material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	material = glow_material
+
 	z_index = 30
 	queue_redraw()
 
@@ -86,30 +94,35 @@ func _draw() -> void:
 		for index in range(4):
 			var t: float = 0.18 + float(index) * 0.16
 			var ghost_position: Vector2 = direction * path_length * t
-			var ghost_size: float = 19.0 - float(index) * 2.7
-			var alpha: float = (0.18 - float(index) * 0.028) * (0.35 + _progress * 0.65)
-			_draw_diamond(
-				ghost_position,
-				ghost_size,
-				Color(_visual_color.r, _visual_color.g, _visual_color.b, alpha),
-				3.2
-			)
+			var ghost_radius: float = 15.0 - float(index) * 2.1
+			var alpha: float = (0.30 - float(index) * 0.045) * (0.35 + _progress * 0.65)
+			_draw_energy_glow(ghost_position, ghost_radius, _visual_color, alpha)
 
 	var ring_radius: float = 76.0 + pulse * 6.0
-	draw_circle(
-		Vector2.ZERO,
-		ring_radius * 0.78,
-		Color(_visual_color.r, _visual_color.g, _visual_color.b, 0.075),
-		true
-	)
+
+	# Nucleo em gradiente suave no lugar do preenchimento solido chapado.
+	_draw_energy_glow(Vector2.ZERO, ring_radius * 0.68, _visual_color, 0.24 + pulse * 0.05)
+
+	# Linha do anel mais fina e nitida — o brilho ja vem do gradiente acima,
+	# entao o traco nao precisa ser grosso para ler como "energetico".
 	draw_arc(
 		Vector2.ZERO,
 		ring_radius,
 		0.0,
 		TAU,
-		44,
-		Color(_visual_color.r, _visual_color.g, _visual_color.b, 0.36),
-		5.0,
+		56,
+		Color(_visual_color.r, _visual_color.g, _visual_color.b, 0.55),
+		2.2,
+		true
+	)
+	draw_arc(
+		Vector2.ZERO,
+		ring_radius * 0.985,
+		0.0,
+		TAU,
+		56,
+		Color(1.0, 1.0, 1.0, 0.18 + pulse * 0.08),
+		1.2,
 		true
 	)
 	draw_arc(
@@ -117,9 +130,9 @@ func _draw() -> void:
 		ring_radius * 0.84,
 		-PI * 0.68,
 		PI * 0.10,
-		26,
-		Color.WHITE,
-		3.0,
+		30,
+		Color(1.0, 1.0, 1.0, 0.88),
+		1.8,
 		true
 	)
 
@@ -131,26 +144,34 @@ func _draw() -> void:
 		draw_line(
 			inner,
 			outer,
-			Color(_visual_color.r, _visual_color.g, _visual_color.b, 0.38),
-			3.0,
+			Color(_visual_color.r, _visual_color.g, _visual_color.b, 0.48),
+			1.6,
 			true
 		)
 
 
-func _draw_diamond(
+## Gradiente radial "falso": camadas de circulo com alpha decrescente.
+## Sem custo de shader/textura, mas le como um brilho de energia suave
+## em vez do contorno solido e grosso que existia antes.
+func _draw_energy_glow(
 	position_value: Vector2,
-	size: float,
+	radius_value: float,
 	color: Color,
-	width: float
+	alpha: float
 ) -> void:
-	var points := PackedVector2Array([
-		position_value + Vector2(0.0, -size),
-		position_value + Vector2(size, 0.0),
-		position_value + Vector2(0.0, size),
-		position_value + Vector2(-size, 0.0),
-		position_value + Vector2(0.0, -size),
-	])
-	draw_polyline(points, color, width, true)
+	if radius_value <= 0.0 or alpha <= 0.0:
+		return
+	const LAYERS: int = 4
+	for layer in range(LAYERS):
+		var t: float = float(layer) / float(LAYERS - 1)
+		var layer_radius: float = radius_value * (1.0 - t * 0.74)
+		var layer_alpha: float = alpha * (0.18 + (1.0 - t) * 0.58)
+		draw_circle(
+			position_value,
+			layer_radius,
+			Color(color.r, color.g, color.b, layer_alpha),
+			true
+		)
 
 
 func _frame_color(index: int) -> Color:
