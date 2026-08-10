@@ -39,6 +39,8 @@ const CIRCLE_SCALE: float = 0.985
 const PRESENTATION_SECONDS: float = 2.70
 const COUNTDOWN_SECONDS: float = 3.0
 const RESULT_SECONDS: float = 12.0
+const RESULT_PASS_PERCENT: float = 70.0
+const RESULT_INPUT_LOCK_SECONDS: float = 0.90
 const RECORD_PATH: String = "user://hit_music_records.json"
 const GAME_OVER_STING_PATH: String = "res://songs/game_over.mp3"
 
@@ -68,6 +70,10 @@ var _state_time: float = 0.0
 var _song_time: float = 0.0
 var _song_duration: float = 90.0
 var _failed: bool = false
+var _result_score_percent: float = 0.0
+var _result_transitioning: bool = false
+var _song_audio_started: bool = false
+var _song_finish_requested: bool = false
 
 var _center: Vector2 = Vector2.ZERO
 var _radius: float = 100.0
@@ -172,7 +178,7 @@ func _process(delta: float) -> void:
 			_update_hud()
 			_update_dynamic_volume(delta)
 			if _song_time >= _song_duration - 0.02:
-				_finish_game(false)
+				_request_song_finish()
 		GameState.RESULT:
 			if _state_time >= RESULT_SECONDS:
 				_go_to_selector()
@@ -245,13 +251,16 @@ func _build_scene() -> void:
 	_music_player.bus = "Master"
 	_music_player.volume_db = -1.0
 	add_child(_music_player)
+	_music_player.finished.connect(_on_song_audio_finished)
 
 	_video_player = VideoStreamPlayer.new()
 	_video_player.name = "VideoBackground"
 	_video_player.position = _video_rect.position
 	_video_player.size = _video_rect.size
 	_video_player.expand = true
-	_video_player.loop = true
+	# O video acompanha uma unica execucao da musica. Se ele repetir antes
+	# do resultado, parece que a partida recomecou e encobre a falha de fim.
+	_video_player.loop = false
 	_video_player.bus = "Master"
 	_video_player.volume_db = -80.0
 	_video_player.z_index = 2
@@ -369,9 +378,10 @@ func _build_hud() -> void:
 	# antes o texto (nome, hits/misses, cabecalho + linhas do ranking)
 	# nao cabia na area reservada e vazava pra fora do painel.
 	_result_panel = Panel.new()
-	_result_panel.position = _center - Vector2(_radius * 0.56, _radius * 0.49)
-	_result_panel.size = Vector2(_radius * 1.12, _radius * 0.98)
+	_result_panel.position = _center - Vector2(_radius * 0.62, _radius * 0.56)
+	_result_panel.size = Vector2(_radius * 1.24, _radius * 1.12)
 	_result_panel.visible = false
+	_result_panel.z_index = 240
 	_result_panel.add_theme_stylebox_override("panel", _result_panel_style())
 	_hud_layer.add_child(_result_panel)
 
@@ -386,10 +396,11 @@ func _build_hud() -> void:
 	_result_score.add_theme_color_override("font_color", _accent_color())
 	_result_panel.add_child(_result_score)
 
-	_result_details = _make_label("", int(_radius * 0.032), HORIZONTAL_ALIGNMENT_CENTER, font)
-	_result_details.position = Vector2(_radius * 0.06, _radius * 0.45)
-	_result_details.size = Vector2(_result_panel.size.x - _radius * 0.12, _radius * 0.42)
+	_result_details = _make_label("", int(_radius * 0.028), HORIZONTAL_ALIGNMENT_CENTER, font)
+	_result_details.position = Vector2(_radius * 0.06, _radius * 0.42)
+	_result_details.size = Vector2(_result_panel.size.x - _radius * 0.12, _radius * 0.60)
 	_result_details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_result_details.clip_text = true
 	_result_panel.add_child(_result_details)
 
 
@@ -398,6 +409,10 @@ func _load_assets() -> void:
 	if ResourceLoader.exists(audio_path):
 		var audio_resource: Resource = load(audio_path)
 		if audio_resource is AudioStream:
+			# A faixa do gameplay precisa terminar de verdade. Se o recurso MP3
+			# vier importado com loop, o sinal finished nunca sera emitido.
+			if audio_resource is AudioStreamMP3:
+				(audio_resource as AudioStreamMP3).loop = false
 			_music_player.stream = audio_resource as AudioStream
 			_music_player.volume_db = -1.0
 			_song_duration = maxf((_music_player.stream as AudioStream).get_length(), 10.0)
@@ -453,6 +468,9 @@ func _prepare_chart() -> void:
 func _start_countdown() -> void:
 	_state = GameState.COUNTDOWN
 	_state_time = 0.0
+	_song_time = 0.0
+	_song_audio_started = false
+	_song_finish_requested = false
 	_cover.visible = false
 	_video_player.visible = true
 	if _video_player.stream != null:
@@ -461,6 +479,7 @@ func _start_countdown() -> void:
 		push_warning("Video da musica nao foi carregado: " + str(_song.get("video", "")))
 	if _music_player.stream != null:
 		_music_player.play()
+		_song_audio_started = true
 	_set_gameplay_hud_visible(false)
 	_countdown_label.visible = true
 	_countdown_label.text = "3"
@@ -514,12 +533,39 @@ void fragment() {
 
 
 func _update_song_time() -> void:
-	if _music_player == null or not _music_player.playing:
+	if _music_player == null:
+		return
+	if not _music_player.playing:
+		# Rede de seguranca para drivers/backends que encerram o stream sem
+		# entregar o sinal finished. So vale depois que PLAYING ja comecou.
+		if _song_audio_started and _state == GameState.PLAYING and _state_time > 0.10:
+			_song_time = _song_duration
+			_request_song_finish()
 		return
 	var value: float = _music_player.get_playback_position()
 	value += AudioServer.get_time_since_last_mix()
 	value -= AudioServer.get_output_latency()
 	_song_time = clampf(value, 0.0, _song_duration)
+
+
+func _on_song_audio_finished() -> void:
+	# O MP3 pode mudar playing para false antes que o ultimo _process()
+	# consiga observar song_time == duration. O sinal finished e a fonte
+	# confiavel para encerrar a partida e abrir o modal exatamente uma vez.
+	if not _song_audio_started:
+		return
+	if _state != GameState.COUNTDOWN and _state != GameState.PLAYING:
+		return
+	_song_time = _song_duration
+	_request_song_finish()
+
+
+func _request_song_finish() -> void:
+	if _song_finish_requested or _state == GameState.RESULT:
+		return
+	_song_finish_requested = true
+	# Evita trocar de estado no meio da emissao do sinal do player.
+	call_deferred("_finish_game", false)
 
 
 ## A musica "respira" com o desempenho do jogador: fica mais cheia
@@ -573,7 +619,7 @@ func _spawn_tap_visual(event: Dictionary, approach: float) -> void:
 		_lane_positions[lane],
 		float(event.get("time", 0.0)) - approach,
 		float(event.get("time", 0.0)),
-		_radius * 0.145 * float(_difficulty.get("tap_scale", 1.0)),
+		_radius * 0.158 * float(_difficulty.get("tap_scale", 1.0)),
 		int(event.get("color_index", lane % 3))
 	)
 	event["_node"] = visual
@@ -625,10 +671,9 @@ func _update_notes_and_misses() -> void:
 
 func _process_physical_inputs() -> void:
 	if _state == GameState.RESULT:
-		if _action_pressed("input_start") or _action_pressed("ui_accept"):
-			get_tree().reload_current_scene()
-		elif _action_pressed("input_b") or _action_pressed("ui_cancel"):
-			_go_to_selector()
+		if not ArcadeSettings.is_credit_mode():
+			if _action_pressed("input_start") or _action_pressed("ui_accept"):
+				_activate_result_action()
 		return
 
 	if _state != GameState.PLAYING:
@@ -649,10 +694,11 @@ func _process_physical_inputs() -> void:
 
 func _input(event: InputEvent) -> void:
 	if _state == GameState.RESULT:
-		if event is InputEventScreenTouch and event.pressed:
-			get_tree().reload_current_scene()
-		elif event is InputEventMouseButton and event.pressed:
-			get_tree().reload_current_scene()
+		if not ArcadeSettings.is_credit_mode():
+			if event is InputEventScreenTouch and event.pressed:
+				_activate_result_action()
+			elif event is InputEventMouseButton and event.pressed:
+				_activate_result_action()
 		return
 
 	if _state != GameState.PLAYING:
@@ -1058,9 +1104,12 @@ func _event_color(event: Dictionary) -> Color:
 func _finish_game(failed: bool) -> void:
 	if _state == GameState.RESULT:
 		return
+	_song_audio_started = false
+	_song_finish_requested = true
 	_state = GameState.RESULT
 	_state_time = 0.0
 	_failed = failed
+	_result_transitioning = false
 	_music_player.stop()
 	_video_player.stop()
 	_video_player.visible = false
@@ -1068,11 +1117,12 @@ func _finish_game(failed: bool) -> void:
 	_set_gameplay_hud_visible(false)
 
 	var score: float = _score_percent()
-	_result_title.text = "TRACK FAILED" if failed else "TRACK CLEAR"
+	_result_score_percent = score
+	_result_title.text = "PRÓXIMA MÚSICA" if score >= RESULT_PASS_PERCENT else "TENTE NOVAMENTE"
 	_result_score.text = "%.2f%%" % score
 	_result_details.text = (
-		"HITS %d   MISSES %d\nMAX COMBO %d\nSTART: REPLAY   B: MENU"
-		% [_hits, _misses, _max_combo]
+		"HITS %d   MISSES %d\nMAX COMBO %d\n%s"
+		% [_hits, _misses, _max_combo, _result_action_hint()]
 	)
 	_save_record(score)
 	LED_CLIENT.clear_all()
@@ -1098,6 +1148,8 @@ func _reveal_result_panel() -> void:
 	# repente — junto com o sting de game over, deixa claro que a
 	# partida terminou, sem susto/corte seco.
 	_result_panel.visible = true
+	_result_panel.z_index = 240
+	_result_panel.move_to_front()
 	_result_panel.modulate.a = 0.0
 	_result_panel.pivot_offset = _result_panel.size * 0.5
 	_result_panel.scale = Vector2(0.94, 0.94)
@@ -1108,6 +1160,77 @@ func _reveal_result_panel() -> void:
 	tween.set_ease(Tween.EASE_OUT)
 	tween.tween_property(_result_panel, "modulate:a", 1.0, 0.50)
 	tween.tween_property(_result_panel, "scale", Vector2.ONE, 0.50)
+
+
+func _force_result_panel_visible() -> void:
+	if _state != GameState.RESULT:
+		return
+	if _result_panel == null or not is_instance_valid(_result_panel):
+		return
+	if _hud_layer != null and is_instance_valid(_hud_layer):
+		_hud_layer.layer = 90
+	_result_panel.visible = true
+	_result_panel.z_index = 240
+	_result_panel.modulate = Color.WHITE
+	_result_panel.scale = Vector2.ONE
+	_result_panel.move_to_front()
+
+
+func _result_action_hint() -> String:
+	if ArcadeSettings.is_credit_mode():
+		return "RETORNO AO MENU EM 12 SEGUNDOS"
+	if _result_score_percent >= RESULT_PASS_PERCENT:
+		return "START OU TOQUE: PRÓXIMA MÚSICA\nMENU AUTOMÁTICO EM 12 SEGUNDOS"
+	return "START OU TOQUE: TENTAR NOVAMENTE\nMENU AUTOMÁTICO EM 12 SEGUNDOS"
+
+
+func _activate_result_action() -> void:
+	if _state != GameState.RESULT or _result_transitioning:
+		return
+	# Descarta o toque/START residual do ultimo hit. Sem esta trava o modal
+	# podia ser criado e a cena recarregada no mesmo instante, parecendo
+	# que o resultado nunca apareceu.
+	if _state_time < RESULT_INPUT_LOCK_SECONDS:
+		return
+	if ArcadeSettings.is_credit_mode():
+		return
+	_result_transitioning = true
+	LED_CLIENT.clear_all()
+	if _result_score_percent >= RESULT_PASS_PERCENT:
+		_go_to_next_song()
+	else:
+		get_tree().reload_current_scene()
+
+
+func _go_to_next_song() -> void:
+	var songs: Array = CATALOG.all_songs()
+	if songs.is_empty():
+		_go_to_selector()
+		return
+
+	var current_id: String = str(_song.get("id", _song_id()))
+	var current_index: int = 0
+	for index in range(songs.size()):
+		var value: Variant = songs[index]
+		if value is Dictionary and str((value as Dictionary).get("id", "")) == current_id:
+			current_index = index
+			break
+
+	var next_index: int = (current_index + 1) % songs.size()
+	var next_value: Variant = songs[next_index]
+	if not next_value is Dictionary:
+		_go_to_selector()
+		return
+	var next_song: Dictionary = next_value as Dictionary
+	var scene_path: String = str(next_song.get("scene", ""))
+	if scene_path.is_empty() or not ResourceLoader.exists(scene_path):
+		_go_to_selector()
+		return
+
+	get_tree().set_meta("hit_music_song_id", str(next_song.get("id", "")))
+	get_tree().set_meta("hit_music_selector_index", next_index)
+	get_tree().set_meta("hit_music_difficulty", _difficulty_name)
+	get_tree().change_scene_to_file(scene_path)
 
 
 func _update_hud() -> void:
@@ -1192,7 +1315,7 @@ func _nearest_lane(position_value: Vector2) -> int:
 		if distance_value < best_distance:
 			best_distance = distance_value
 			best_lane = lane
-	return best_lane if best_distance <= _radius * 0.14 else -1
+	return best_lane if best_distance <= _radius * 0.155 else -1
 
 
 func _state_name() -> String:

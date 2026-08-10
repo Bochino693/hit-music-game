@@ -600,13 +600,14 @@ func _finish_game(failed: bool) -> void:
 
 	if _result_details != null:
 		_result_details.text = (
-			"%s\nHITS %d   MISSES %d   MAX COMBO %d\n%s"
+			"%s\nHITS %d   MISSES %d   MAX COMBO %d\n%s\n%s"
 			% [
 				_player_name,
 				_hits,
 				_misses,
 				_max_combo,
 				_ranking_text(),
+				_result_action_hint(),
 			]
 		)
 

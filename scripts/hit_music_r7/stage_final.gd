@@ -65,6 +65,13 @@ func _start_playing() -> void:
 	_publish_game_frame_r21()
 
 
+func _finish_game(failed: bool) -> void:
+	super._finish_game(failed)
+	# A cadeia de overlays evoluiu em varias versoes. Reafirma o modal
+	# no ultimo nivel para que nenhuma camada herdada o deixe invisivel.
+	call_deferred("_force_result_panel_visible")
+
+
 func _exit_tree() -> void:
 	var client := _led_client_r21()
 	if client != null and client.has_method("end_game"):

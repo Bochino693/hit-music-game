@@ -871,9 +871,9 @@ func _draw_inner_technical_rings() -> void:
 func _draw_ring() -> void:
 	var ring_radius: float = radius * 0.905
 	var width: float = maxf(4.0, radius * 0.0072)
-	# Alvo branco onde o tazo se encaixa: aumentado (era 0.0195) pra
+	# Alvo branco onde o tazo se encaixa: levemente ampliado para
 	# dar mais presenca e deixar claro o ponto de acerto.
-	var marker_radius: float = maxf(9.0, radius * 0.0295)
+	var marker_radius: float = maxf(10.0, radius * 0.0330)
 	var pulse: float = _beat_pulse()
 	var primary: Color = _primary()
 	var reaction: float = _hit_energy + _combo_energy * 0.26

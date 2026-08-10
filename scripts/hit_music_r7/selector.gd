@@ -652,12 +652,12 @@ func _build_info_panel(font: Font) -> void:
 	_info_panel.add_child(_hard_record_label)
 
 	_start_panel = Panel.new()
-	_start_panel.position = Vector2(_radius * 0.19, _radius * 1.585)
-	_start_panel.size = Vector2(_radius * 0.78, _radius * 0.105)
-	_content_root.add_child(_start_panel)
+	_start_panel.position = Vector2(_info_panel.size.x * 0.055, _info_panel.size.y * 0.915)
+	_start_panel.size = Vector2(_info_panel.size.x * 0.89, _info_panel.size.y * 0.065)
+	_info_panel.add_child(_start_panel)
 
 	_start_label = _make_label(
-		"START  •  JOGAR",
+		"B / START  •  JOGAR",
 		int(_radius * 0.028),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
