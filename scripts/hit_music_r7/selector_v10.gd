@@ -6,6 +6,12 @@ var _touch_last: Vector2 = Vector2.ZERO
 var _touch_velocity: float = 0.0
 
 
+# Lane fisica que acende como indicador do input D (desce/anterior).
+# O comando MENU do firmware so acende 2 lanes por vez (idxA/idxB,
+# ja usadas por A/B); D precisa de um LED %d avulso por cima.
+const DOWN_LANE_INDEX: int = 3
+
+
 func _ready() -> void:
 	Engine.max_fps = 120
 	super._ready()
@@ -13,6 +19,7 @@ func _ready() -> void:
 		_index,
 		_song_primary(_songs[_index] as Dictionary)
 	)
+	LED_CLIENT.set_lane(DOWN_LANE_INDEX, LED_CLIENT.MENU_NEXT_COLOR)
 
 
 func _process(delta: float) -> void:
@@ -36,6 +43,7 @@ func _change_selection(direction: int) -> void:
 		_index,
 		_song_primary(_songs[_index] as Dictionary)
 	)
+	LED_CLIENT.set_lane(DOWN_LANE_INDEX, LED_CLIENT.MENU_NEXT_COLOR)
 
 
 func _input(event: InputEvent) -> void:

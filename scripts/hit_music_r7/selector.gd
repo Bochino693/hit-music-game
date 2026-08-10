@@ -89,7 +89,7 @@ func _process(delta: float) -> void:
 	if not _transitioning:
 		if _action_pressed("input_a") or _action_pressed("ui_down") or _action_pressed("ui_right"):
 			_change_selection(1)
-		elif _action_pressed("ui_up") or _action_pressed("ui_left"):
+		elif _action_pressed("input_d") or _action_pressed("ui_up") or _action_pressed("ui_left"):
 			_change_selection(-1)
 
 		if _action_pressed("input_b"):

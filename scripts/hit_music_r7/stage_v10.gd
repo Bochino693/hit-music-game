@@ -13,10 +13,13 @@ func _ready() -> void:
 	Engine.max_fps = 120
 	super._ready()
 
-	_difficulty_cursor = -1
-	_difficulty_name = ""
+	# Hover ja comeca em FACIL (cursor 0), nao em "nada selecionado"
+	# (-1) — antes o jogador via os dois botoes apagados ate apertar
+	# A pela primeira vez.
+	_difficulty_cursor = 0
 	_difficulty_confirmed = false
 	_display_score = 0.0
+	_select_difficulty("easy", true)
 
 	if _pre_game_title != null:
 		_pre_game_title.text = "ESCOLHA A DIFICULDADE"
@@ -34,6 +37,9 @@ func _ready() -> void:
 		_primary_color(),
 		_accent_color()
 	)
+	# A/B ficam acesos persistentes nesta tela (padrao do MENU: lane 0
+	# = A/mover, lane 1 = B/selecionar) — antes so piscavam no toque.
+	LED_CLIENT.menu_state()
 
 
 func _process(delta: float) -> void:
@@ -98,6 +104,7 @@ func _move_difficulty_cursor() -> void:
 	)
 
 	LED_CLIENT.menu_next_feedback()
+	LED_CLIENT.menu_state()
 
 
 func _confirm_difficulty() -> void:

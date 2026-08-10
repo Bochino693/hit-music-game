@@ -241,7 +241,14 @@ func send(command: String) -> bool:
 		if op == "MENU" or op == "CLEAR":
 			return _write_ui_state(cmd)
 
-		# No seletor não existe flash físico.
+		if op == "LED":
+			# Guia estatica adicional além das 2 lanes do proprio
+			# comando MENU (que so acende idxA/idxB, tudo mais fica
+			# apagado) — usado quando uma tela de menu precisa de um
+			# terceiro botao aceso (ex.: input D no seletor de musica).
+			return _enqueue_transient(cmd)
+
+		# Demais comandos (HIT/PULSE/OK/ERR) continuam sem flash fisico no menu.
 		return true
 
 	if op in [

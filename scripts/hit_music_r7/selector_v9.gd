@@ -9,13 +9,15 @@ func _ready() -> void:
 		_hard_chip.visible = false
 	if _instruction_label != null:
 		_instruction_label.text = (
-			"A  PROXIMA MUSICA     START  SELECIONAR"
+			"A  PROXIMA     D  ANTERIOR     B/START  SELECIONAR"
 		)
 	if _mode_label != null:
 		_mode_label.text = "DIFICULDADE NA FASE"
 
 
 func _toggle_difficulty() -> void:
+	# selector_v10.gd sobrescreve isso e ja chama _start_selected() —
+	# B ja funciona como start nesta tela (nao chama super aqui).
 	pass
 
 
