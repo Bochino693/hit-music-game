@@ -1,6 +1,6 @@
 /*
   ============================================================
-  HIT MUSIC CLEAN R25 - FIRMWARE UNICO
+  HIT MUSIC CLEAN R25.1 - FIRMWARE UNICO
   ============================================================
 
   Novidade do R25 (unica mudanca em relacao ao R24):
@@ -114,7 +114,16 @@
 #define BAUD_RATE 9600
 
 #define LINHA_MAX_CHARS 120
-#define MAX_TOKENS 12
+
+/*
+  ATENCAO (bug corrigido no R25.1):
+  O MENU de tres lanes ocupa 13 tokens ("MENU" + 12 argumentos).
+  Com MAX_TOKENS em 12 o tokenizador parava no 12o token, "qtd"
+  nunca chegava a 13 e a terceira lane JAMAIS acendia — era esse
+  o motivo do LED de descer ficar apagado na tela de cenarios.
+  Mantenha folga aqui ao criar comandos novos.
+*/
+#define MAX_TOKENS 16
 
 /* Teto de quadros durante animacao (~62 fps). */
 #define INTERVALO_FRAME_LED_MS 16
@@ -443,7 +452,7 @@ void processar_comando(char *linha) {
     Serial.println(F("PONG"));
   }
   else if (strcmp(cmd, "VERSION") == 0) {
-    Serial.println(F("HITMUSIC_CLEAN_R25"));
+    Serial.println(F("HITMUSIC_CLEAN_R25_1"));
   }
   else if (strcmp(cmd, "LED") == 0 && qtd >= 5) {
     #if 1

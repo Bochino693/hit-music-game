@@ -44,8 +44,15 @@ const GAME_OVER_STING_PATH: String = "res://songs/game_over.mp3"
 
 const MUSIC_VOLUME_MIN_DB: float = -16.0
 const MUSIC_VOLUME_MAX_DB: float = -1.0
-const MUSIC_VOLUME_COMBO_FOR_MAX: float = 10.0
 const MUSIC_VOLUME_SMOOTH_SPEED: float = 2.4
+
+## Energia da musica: comeca CHEIA (1.0) e a musica ja entra alta.
+## Acertar MANTEM (e recupera de volta ao topo se tiver caido);
+## errar ABAIXA. Antes o volume era derivado do combo, o que fazia a
+## musica nascer abafada e so "ligar" depois de uma sequencia de
+## acertos — o oposto do que se quer.
+const MUSIC_ENERGY_MISS_PENALTY: float = 0.16
+const MUSIC_ENERGY_HIT_RECOVERY: float = 0.10
 
 # Mesmo amarelo usado na fita do hold (playfield_renderer._draw_hold)
 # e no LED fisico (HOLD_COLOR em stage_final.gd) — o hold e sempre
@@ -94,6 +101,8 @@ var _misses: int = 0
 var _combo: int = 0
 var _max_combo: int = 0
 var _performance: float = 100.0
+## 1.0 = musica no volume cheio. Ver MUSIC_ENERGY_* acima.
+var _music_energy: float = 1.0
 
 var _touch_positions: Dictionary = {}
 var _mouse_down: bool = false
@@ -516,21 +525,11 @@ func _update_dynamic_volume(delta: float) -> void:
 	if _music_player == null or not _music_player.playing:
 		return
 
-	# Antes do primeiro julgamento (ainda nao acertou nem errou nada)
-	# a musica toca no volume normal. So depois que o jogador comeca a
-	# ser avaliado o volume passa a acompanhar o combo atual.
-	var target_db: float = MUSIC_VOLUME_MAX_DB
-	if _judgement_count > 0:
-		var combo_ratio: float = clampf(
-			float(_combo) / MUSIC_VOLUME_COMBO_FOR_MAX,
-			0.0,
-			1.0
-		)
-		target_db = lerpf(
-			MUSIC_VOLUME_MIN_DB,
-			MUSIC_VOLUME_MAX_DB,
-			combo_ratio
-		)
+	var target_db: float = lerpf(
+		MUSIC_VOLUME_MIN_DB,
+		MUSIC_VOLUME_MAX_DB,
+		clampf(_music_energy, 0.0, 1.0)
+	)
 
 	var rate: float = clampf(delta * MUSIC_VOLUME_SMOOTH_SPEED, 0.0, 1.0)
 	_music_player.volume_db = lerpf(_music_player.volume_db, target_db, rate)
@@ -958,6 +957,8 @@ func _resolve_hit(event: Dictionary, kind: String, quality: float) -> void:
 	_max_combo = maxi(_max_combo, _combo)
 	_renderer.register_hit(quality, _combo)
 	_performance = minf(100.0, _performance + (1.15 if quality >= 0.99 else 0.55))
+	# Acertar MANTEM a musica cheia (e recupera se ela tinha caido).
+	_music_energy = minf(1.0, _music_energy + MUSIC_ENERGY_HIT_RECOVERY)
 
 
 func _resolve_miss(event: Dictionary) -> void:
@@ -975,8 +976,9 @@ func _resolve_miss(event: Dictionary) -> void:
 	_misses += 1
 	_combo = 0
 	_performance = maxf(0.0, _performance - 6.0)
-	if _performance <= 70.0:
-		_finish_game(true)
+	# Errar ABAIXA a musica. A partida NAO e mais cancelada por
+	# desempenho: o jogador sempre toca a musica ate o fim.
+	_music_energy = maxf(0.0, _music_energy - MUSIC_ENERGY_MISS_PENALTY)
 
 
 func _remove_tap_node(event: Dictionary) -> void:

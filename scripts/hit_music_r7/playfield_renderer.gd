@@ -340,15 +340,19 @@ func _draw_theme_geometry() -> void:
 			)
 			color.a = intensity * (0.20 + float(layer) * 0.024) + beat * 0.018 + reaction * 0.055
 
-			# Brilho suave por tras de cada elemento — troca a leitura
-			# "linha tecnica fina" por algo mais nebuloso/energetico.
-			_draw_soft_glow(
-				position_value,
-				size * 2.35,
-				color,
-				(intensity * 0.6 + reaction * 0.30) * (0.5 + beat * 0.3),
-				2
-			)
+			# Brilho suave por tras do elemento. So em um a cada dois
+			# elementos: visualmente o halo se funde com o do vizinho
+			# de qualquer forma, e isso corta pela metade a quantidade
+			# de circulos preenchidos por frame (parte mais cara do
+			# fundo, que roda em TODO frame de gameplay).
+			if (index + layer) % 2 == 0:
+				_draw_soft_glow(
+					position_value,
+					size * 2.9,
+					color,
+					(intensity * 0.7 + reaction * 0.34) * (0.5 + beat * 0.3),
+					2
+				)
 
 			# 8 fundos distintos, um por musica: cada shape/leitura muda
 			# bastante a personalidade da tela sem precisar de arte nova.
@@ -705,7 +709,9 @@ func _draw_inner_technical_rings() -> void:
 func _draw_ring() -> void:
 	var ring_radius: float = radius * 0.905
 	var width: float = maxf(4.0, radius * 0.0072)
-	var marker_radius: float = maxf(6.0, radius * 0.0195)
+	# Alvo branco onde o tazo se encaixa: aumentado (era 0.0195) pra
+	# dar mais presenca e deixar claro o ponto de acerto.
+	var marker_radius: float = maxf(9.0, radius * 0.0295)
 	var pulse: float = _beat_pulse()
 	var primary: Color = _primary()
 	var reaction: float = _hit_energy + _combo_energy * 0.26
@@ -715,7 +721,7 @@ func _draw_ring() -> void:
 		ring_radius + radius * 0.004,
 		0.0,
 		TAU,
-		320,
+		160,
 		Color(primary.r, primary.g, primary.b, 0.10 + pulse * 0.05 + reaction * 0.12),
 		width * (3.4 + reaction * 1.6),
 		true
@@ -725,7 +731,7 @@ func _draw_ring() -> void:
 		ring_radius,
 		0.0,
 		TAU,
-		320,
+		160,
 		Color.WHITE,
 		width,
 		true
@@ -751,12 +757,22 @@ func _draw_ring() -> void:
 		)
 
 		var core_color: Color = Color.WHITE.lerp(flash_color, minf(flash * 1.4, 1.0))
-		draw_circle(
+		var core_size: float = marker_radius * (1.0 + lane_pulse * 0.16 + flash * 0.32)
+
+		# Miolo escuro + anel branco grosso: leitura de "alvo", bem
+		# mais definida que um disco branco chapado.
+		draw_circle(position_value, core_size, Color(0.010, 0.016, 0.030, 0.92), true)
+		draw_arc(
 			position_value,
-			marker_radius * (1.0 + lane_pulse * 0.16 + flash * 0.32),
+			core_size * 0.80,
+			0.0,
+			TAU,
+			22,
 			core_color,
+			maxf(2.0, core_size * 0.34),
 			true
 		)
+		draw_circle(position_value, core_size * 0.26, core_color, true)
 
 		if flash > 0.02:
 			# Arco de energia correndo pela linha, saindo do ponto
@@ -969,20 +985,39 @@ func _draw_capsule(
 		true
 	)
 
-	# Barras deslizantes deixam a direcao evidente sem criar poluicao visual.
-	var marker_count: int = clampi(int(length / maxf(half_width * 2.8, 1.0)), 3, 8)
+	# Chevrons deslizantes no lugar de barras retas: alem de marcar o
+	# ritmo, apontam pro alvo, deixando a direcao do hold obvia. Sao
+	# poucos e desenhados como duas linhas (nao poligono), pra manter
+	# barato mesmo com varios holds na tela.
+	var marker_count: int = clampi(int(length / maxf(half_width * 3.1, 1.0)), 3, 7)
 	var phase: float = fmod(_idle_time() * (1.7 if active else 0.75), 1.0)
+	var wing: float = half_width * 0.46
 	for index in range(marker_count):
 		var marker_t: float = fmod((float(index) + phase) / float(marker_count), 1.0)
 		var marker_position: Vector2 = tail.lerp(head, marker_t)
-		var marker_alpha: float = (0.82 if active else 0.42) * smoothstep(0.0, 0.12, marker_t)
-		draw_line(
-			marker_position - normal * half_width * 0.42,
-			marker_position + normal * half_width * 0.42,
-			Color(1.0, 1.0, 1.0, marker_alpha),
-			maxf(1.5, half_width * 0.10),
-			true
-		)
+		var marker_alpha: float = (0.88 if active else 0.44) * smoothstep(0.0, 0.12, marker_t)
+		var tip: Vector2 = marker_position + direction * wing * 0.85
+		var marker_color := Color(1.0, 1.0, 1.0, marker_alpha)
+		var marker_width: float = maxf(1.5, half_width * 0.11)
+		draw_line(marker_position - normal * wing, tip, marker_color, marker_width, true)
+		draw_line(marker_position + normal * wing, tip, marker_color, marker_width, true)
+
+	# Trilhos laterais tracejados dao textura de "fita" ao hold.
+	var rail_count: int = clampi(marker_count * 2, 6, 14)
+	var rail_alpha: float = 0.30 if active else 0.16
+	for index in range(rail_count):
+		var rail_t: float = (float(index) + 0.5) / float(rail_count)
+		var rail_center: Vector2 = tail.lerp(head, rail_t)
+		var rail_half: Vector2 = direction * (length / float(rail_count)) * 0.26
+		for side in [-1.0, 1.0]:
+			var offset: Vector2 = normal * half_width * 1.02 * side
+			draw_line(
+				rail_center - rail_half + offset,
+				rail_center + rail_half + offset,
+				Color(color.r, color.g, color.b, rail_alpha),
+				maxf(1.0, half_width * 0.07),
+				true
+			)
 
 	# Alvo circular grande e estavel. O arco interno mostra o progresso.
 	var head_size: float = half_width * (1.05 + pulse * (0.08 if active else 0.025))
@@ -1000,7 +1035,38 @@ func _draw_capsule(
 		true
 	)
 	draw_circle(head, head_size * 0.24, Color.WHITE if active else color, true)
+
+	# Ticks radiais no alvo: dao acabamento de mostrador/medidor e
+	# marcam visualmente o quanto ja foi segurado.
+	for index in range(8):
+		var tick_angle: float = -PI * 0.5 + TAU * float(index) / 8.0
+		var tick_dir := Vector2(cos(tick_angle), sin(tick_angle))
+		var filled: bool = (float(index) / 8.0) <= progress
+		draw_line(
+			head + tick_dir * head_size * 1.08,
+			head + tick_dir * head_size * (1.30 if filled else 1.20),
+			Color(
+				color.r,
+				color.g,
+				color.b,
+				(0.95 if filled else 0.30) * (1.0 if active else 0.75)
+			),
+			maxf(1.5, half_width * (0.13 if filled else 0.08)),
+			true
+		)
+
+	# Cauda com anel, fechando a fita em vez de terminar num disco seco.
 	draw_circle(tail, half_width * 0.86, Color(color.r, color.g, color.b, 0.92), true)
+	draw_arc(
+		tail,
+		half_width * 1.18,
+		0.0,
+		TAU,
+		20,
+		Color(color.r, color.g, color.b, 0.34 + pulse * 0.10),
+		maxf(1.5, half_width * 0.10),
+		true
+	)
 
 func _draw_slide(event: Dictionary) -> void:
 	if not bool(event.get("_spawned", false)):

@@ -237,6 +237,8 @@ class PortalCircular:
 
 
 # --- Constantes físicas da mesa redonda (iguais às do Rick and Morty) ---
+const SETTINGS_GATE: Script = preload("res://scripts/hit_music_r7/settings_gate.gd")
+
 const RAIO_FISICO_CM: float = 48.0
 const DIAMETRO_FISICO_CM: float = RAIO_FISICO_CM * 2.0
 const CIRCUNFERENCIA_FISICA_CM: float = DIAMETRO_FISICO_CM * PI
@@ -357,6 +359,8 @@ func _ready() -> void:
 	_iniciar_pulso_start()
 	_iniciar_portal_entrada()
 	get_viewport().size_changed.connect(_on_tela_redimensionada)
+	_sincronizar_com_arcade_settings()
+	ArcadeSettings.changed.connect(_sincronizar_com_arcade_settings)
 
 
 func _process(delta: float) -> void:
@@ -378,6 +382,10 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	# F9 abre a tela de Configuracoes (modo livre/credito, teste de
+	# LED e input, porta COM).
+	if SETTINGS_GATE.try_open_from_keyboard(event):
+		return
 	# Tecla "1" também funciona como START (além do input_start do encoder).
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_1:
 		_ao_apertar_start()
@@ -1156,11 +1164,24 @@ func _posicionar_hud_superior(tam_tela: Vector2) -> void:
 
 func definir_modo_credito(ativo: bool) -> void:
 	modo_credito = ativo
+	ArcadeSettings.set_mode(
+		ArcadeSettings.Mode.CREDIT if ativo else ArcadeSettings.Mode.FREE
+	)
 	_atualizar_hud_operacao(true)
 
 
 func definir_creditos(valor: int) -> void:
 	creditos_maquina = clampi(valor, 0, 999)
+	ArcadeSettings.set_credits(creditos_maquina)
+	_atualizar_hud_operacao(true)
+
+
+## O modo e o saldo vivem no autoload ArcadeSettings (persistido em
+## disco), nao nos @export locais — assim a escolha feita na tela de
+## Configuracoes (F9) vale aqui, e o saldo sobrevive a fechar o jogo.
+func _sincronizar_com_arcade_settings() -> void:
+	modo_credito = ArcadeSettings.is_credit_mode()
+	creditos_maquina = clampi(ArcadeSettings.credits, 0, 999)
 	_atualizar_hud_operacao(true)
 
 

@@ -1,6 +1,0 @@
-[gd_scene format=3 uid="uid://wnedxbdp3xmr"]
-
-[ext_resource type="Script" uid="uid://5ocrjloi1oso" path="res://scripts/baby_shark.gd" id="1_6p34f"]
-
-[node name="BabyShark" type="Node2D" unique_id=1152182320]
-script = ExtResource("1_6p34f")

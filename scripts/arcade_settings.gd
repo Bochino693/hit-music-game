@@ -78,6 +78,14 @@ func add_credit(amount: int = 1) -> void:
 	save_settings()
 
 
+func set_credits(value: int) -> void:
+	var clamped: int = clampi(value, 0, 999)
+	if clamped == credits:
+		return
+	credits = clamped
+	save_settings()
+
+
 func has_credit() -> bool:
 	return not is_credit_mode() or credits > 0
 

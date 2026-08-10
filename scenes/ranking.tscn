@@ -1,6 +1,0 @@
-[gd_scene format=3 uid="uid://sct4kkiihe3e"]
-
-[ext_resource type="Script" uid="uid://dggqxk8cgkc5q" path="res://scripts/ranking.gd" id="1_tmhu6"]
-
-[node name="Ranking" type="Node2D" unique_id=474627821]
-script = ExtResource("1_tmhu6")

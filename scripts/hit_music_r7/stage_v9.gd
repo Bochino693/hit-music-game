@@ -513,11 +513,13 @@ func _resolve_miss(event: Dictionary) -> void:
 	_misses += 1
 	_combo = 0
 
+	# Errar ABAIXA a musica (energia em stage.gd), mas a partida NAO e
+	# mais cancelada por acumulo de erro: o jogador sempre toca ate o
+	# fim da musica.
+	_music_energy = maxf(0.0, _music_energy - MUSIC_ENERGY_MISS_PENALTY)
+
 	_register_error_time(event)
 	_recalculate_error_performance()
-
-	if _missed_time >= _error_limit_seconds():
-		_finish_game(true)
 
 
 func _register_error_time(event: Dictionary) -> void:
@@ -580,19 +582,14 @@ func _update_hud() -> void:
 		"font_color",
 		_accent_color() if _combo > 0 else Color.WHITE
 	)
-	_center_error.text = "ERROS %.1f / %.1fs" % [
-		_missed_time,
-		_error_limit_seconds(),
-	]
+	# Contador de erro/limite removido da tela: nao existe mais
+	# cancelamento por desempenho, entao mostrar "ERROS x / ys" e
+	# "LIMITE" so poluia o HUD com uma regra que nao existe mais.
+	if _center_error != null:
+		_center_error.visible = false
 
 	if _label_performance != null:
-		_label_performance.text = "LIMITE %.1fs" % _error_limit_seconds()
-		_label_performance.add_theme_color_override(
-			"font_color",
-			_primary_color()
-			if _performance > 25.0
-			else Color(1.0, 0.15, 0.18, 1.0)
-		)
+		_label_performance.visible = false
 
 
 func _finish_game(failed: bool) -> void:

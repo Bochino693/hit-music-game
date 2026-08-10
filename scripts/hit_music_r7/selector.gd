@@ -87,10 +87,12 @@ func _process(delta: float) -> void:
 	_visual_time += delta
 
 	if not _transitioning:
-		if _action_pressed("input_a") or _action_pressed("ui_down") or _action_pressed("ui_right"):
-			_change_selection(1)
-		elif _action_pressed("input_d") or _action_pressed("ui_up") or _action_pressed("ui_left"):
+		# A sobe na lista, D desce (era o inverso). O sentido tem que
+		# bater com a posicao fisica dos botoes no gabinete.
+		if _action_pressed("input_a") or _action_pressed("ui_up") or _action_pressed("ui_left"):
 			_change_selection(-1)
+		elif _action_pressed("input_d") or _action_pressed("ui_down") or _action_pressed("ui_right"):
+			_change_selection(1)
 
 		if _action_pressed("input_b"):
 			_toggle_difficulty()
@@ -348,6 +350,58 @@ func _build_scene() -> void:
 
 	_build_cards(font)
 	_build_info_panel(font)
+	_build_nav_hints(font)
+
+
+## Chips de navegacao: pequenos, uniformes e discretos, ao lado da
+## lista, avisando o que cada botao fisico faz. A seta acompanha o
+## sentido real do movimento (A sobe, D desce).
+func _build_nav_hints(font: Font) -> void:
+	var hints := [
+		{"text": "▲  A", "y": 0.30},
+		{"text": "START  B", "y": 0.50},
+		{"text": "▼  D", "y": 0.70},
+	]
+
+	var chip_size := Vector2(_radius * 0.235, _radius * 0.085)
+	for hint_value in hints:
+		var hint: Dictionary = hint_value
+
+		var chip := Panel.new()
+		chip.size = chip_size
+		chip.position = Vector2(
+			_radius * 0.055,
+			_content_root.size.y * float(hint["y"]) - chip_size.y * 0.5
+		)
+		chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		chip.add_theme_stylebox_override("panel", _nav_hint_style())
+		_content_root.add_child(chip)
+
+		var label := _make_label(
+			str(hint["text"]),
+			int(_radius * 0.030),
+			HORIZONTAL_ALIGNMENT_CENTER,
+			font
+		)
+		label.position = Vector2.ZERO
+		label.size = chip_size
+		label.add_theme_color_override("font_color", Color(0.84, 0.90, 1.0, 1.0))
+		_fit_label_to_width(
+			label,
+			chip_size.x * 0.86,
+			int(_radius * 0.030),
+			int(_radius * 0.016)
+		)
+		chip.add_child(label)
+
+
+func _nav_hint_style() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.020, 0.035, 0.070, 0.82)
+	style.border_color = Color(0.30, 0.62, 0.92, 0.46)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(int(maxf(8.0, _radius * 0.030)))
+	return style
 
 
 func _build_cards(font: Font) -> void:
@@ -395,6 +449,7 @@ func _build_cards(font: Font) -> void:
 		label.position = Vector2(text_x, card.size.y * 0.34)
 		label.size = Vector2(card.size.x - text_x - card.size.x * 0.05, card.size.y * 0.57)
 		label.clip_text = true
+		_fit_label_to_width(label, label.size.x, int(_radius * 0.032), int(_radius * 0.017))
 		card.add_child(label)
 
 		_cards.append(card)
@@ -791,6 +846,41 @@ func _make_label(
 	label.add_theme_constant_override("outline_size", 3)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
+
+
+## Encolhe a fonte do label ate o texto caber na largura reservada.
+## Titulos de musica tem tamanhos bem diferentes ("SOUL" x "CARMINE -
+## ONE PIECE"); com tamanho fixo os longos vazavam o card ou eram
+## cortados no meio da palavra pelo clip_text. Aqui o texto sempre
+## aparece inteiro, so menor quando precisa.
+func _fit_label_to_width(
+	label: Label,
+	max_width: float,
+	base_font_size: int,
+	min_font_size: int = 10
+) -> void:
+	if label == null or not is_instance_valid(label):
+		return
+	if max_width <= 0.0 or label.text.is_empty():
+		return
+
+	var font: Font = label.get_theme_font("font")
+	if font == null:
+		return
+
+	var size_value: int = maxi(base_font_size, min_font_size)
+	while size_value > min_font_size:
+		var measured: float = font.get_string_size(
+			label.text,
+			HORIZONTAL_ALIGNMENT_LEFT,
+			-1.0,
+			size_value
+		).x
+		if measured <= max_width:
+			break
+		size_value -= 1
+
+	label.add_theme_font_size_override("font_size", size_value)
 
 
 func _song_primary(song: Dictionary) -> Color:

@@ -1,6 +1,0 @@
-[gd_scene format=3 uid="uid://rkbu1qriq50r"]
-
-[ext_resource type="Script" uid="uid://bt2jk6topvsai" path="res://scripts/frozen.gd" id="1_4jlxn"]
-
-[node name="Frozen" type="Node2D" unique_id=170631]
-script = ExtResource("1_4jlxn")

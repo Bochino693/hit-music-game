@@ -1,8 +1,0 @@
-[gd_scene load_steps=3 format=3]
-
-[ext_resource type="PackedScene" path="res://scenes/hit_music/base/hit_music_base.tscn" id="1"]
-[ext_resource type="Resource" path="res://scripts/hit_music/configs/carmine_config.tres" id="2"]
-
-[node name="Carmine" instance=ExtResource("1")]
-musica = ExtResource("2")
-dificuldade_teste = "FACIL"
