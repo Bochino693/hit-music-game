@@ -3,6 +3,7 @@ extends Node2D
 const CATALOG: Script = preload("res://scripts/hit_music_r7/catalog.gd")
 const LED_CLIENT: Script = preload("res://scripts/hit_music_r7/led_client.gd")
 const TAP_PALETTE: Script = preload("res://scripts/hit_music_r7/tap_palette.gd")
+const USER_CATALOG: Script = preload("res://scripts/hit_music_r7/user_catalog.gd")
 
 const TOP_MARGIN_RATIO: float = 0.022
 const TOP_HEIGHT_RATIO: float = 0.205
@@ -823,19 +824,10 @@ func _load_preview(song: Dictionary) -> void:
 		_preview_audio.stop()
 	_preview_audio.stream = null
 
-	var path: String = str(song.get("video", ""))
-	if not ResourceLoader.exists(path):
-		return
-
-	var resource: Resource = load(path)
-	if resource is VideoStream:
-		_video.stream = resource as VideoStream
-
-	var audio_path: String = str(song.get("audio", ""))
-	if ResourceLoader.exists(audio_path):
-		var audio_resource: Resource = load(audio_path)
-		if audio_resource is AudioStream:
-			_preview_audio.stream = audio_resource as AudioStream
+	# Passa pelo USER_CATALOG: a musica pode ser de fabrica (res://) ou
+	# cadastrada pelo operador (user://, sem importacao do Godot).
+	_video.stream = USER_CATALOG.load_video(str(song.get("video", "")))
+	_preview_audio.stream = USER_CATALOG.load_audio(str(song.get("audio", "")))
 
 
 func _start_selected() -> void:
@@ -941,12 +933,7 @@ func _load_font() -> Font:
 
 
 func _load_texture(path: String) -> Texture2D:
-	if path.is_empty() or not ResourceLoader.exists(path):
-		return null
-	var resource: Resource = load(path)
-	if resource is Texture2D:
-		return resource as Texture2D
-	return null
+	return USER_CATALOG.load_cover(path)
 
 
 func _make_label(

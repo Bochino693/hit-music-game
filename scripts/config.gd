@@ -5,6 +5,7 @@ extends Node2D
 ## bridge quando ela conecta errado.
 
 const SETTINGS_GATE: Script = preload("res://scripts/hit_music_r7/settings_gate.gd")
+const USER_CATALOG: Script = preload("res://scripts/hit_music_r7/user_catalog.gd")
 
 const LANE_COUNT: int = 8
 const LANE_ACTIONS: Array[String] = [
@@ -16,10 +17,13 @@ const LANE_LABELS: Array[String] = ["A", "B", "C", "D", "E", "F", "G", "H"]
 enum MenuItem {
 	MODE,
 	CREDITS,
+	NEW_SONG,
 	LED_INPUT_TEST,
 	COM_PORT,
 	BACK,
 }
+
+const MENU_ITEM_COUNT: int = 6
 
 var _return_path: String = "res://scenes/opening.tscn"
 var _cursor: int = 0
@@ -43,6 +47,20 @@ var _lane_boxes: Array[Panel] = []
 var _lane_pressed_state: Array[bool] = []
 var _start_box: Panel
 var _start_pressed_state: bool = false
+
+var _song_layer: CanvasLayer
+var _song_panel: Panel
+var _song_name_edit: LineEdit
+var _song_bpm_edit: SpinBox
+var _song_audio_label: Label
+var _song_video_label: Label
+var _song_cover_label: Label
+var _song_status_label: Label
+var _song_list_label: Label
+var _song_audio_path: String = ""
+var _song_video_path: String = ""
+var _song_cover_path: String = ""
+var _in_song_form: bool = false
 
 
 func _ready() -> void:
@@ -72,8 +90,17 @@ func _process(_delta: float) -> void:
 		if not Input.is_action_pressed("input_select"):
 			_select_can_close = true
 		elif _select_can_close and Input.is_action_just_pressed("input_select"):
-			_close_settings()
+			if _in_song_form:
+				_close_song_form()
+			else:
+				_close_settings()
 			return
+
+	if _in_song_form:
+		# O formulario usa teclado e mouse (e acesso de servico). Os
+		# botoes fisicos ficam inertes aqui para nao mexerem no menu que
+		# esta atras enquanto o operador digita.
+		return
 
 	if _in_test_view:
 		_update_test_view()
@@ -99,16 +126,29 @@ func _reload_current_scene() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo:
-		if (
-			event.keycode == KEY_F9
-			or event.keycode == KEY_ESCAPE
-			or event.keycode == KEY_BACKSPACE
-		):
+	if not (event is InputEventKey and event.pressed and not event.echo):
+		return
+
+	var key: InputEventKey = event as InputEventKey
+	# Com o formulario aberto o operador esta digitando: BACKSPACE tem
+	# de apagar caractere, nao fechar a tela. So F9 e ESC saem.
+	if _in_song_form:
+		if key.keycode == KEY_F9 or key.keycode == KEY_ESCAPE:
 			_handle_back()
+		return
+
+	if (
+		key.keycode == KEY_F9
+		or key.keycode == KEY_ESCAPE
+		or key.keycode == KEY_BACKSPACE
+	):
+		_handle_back()
 
 
 func _handle_back() -> void:
+	if _in_song_form:
+		_close_song_form()
+		return
 	if _in_test_view:
 		_close_test_view()
 	else:
@@ -140,6 +180,8 @@ func _activate_cursor() -> void:
 			ArcadeSettings.toggle_mode()
 		MenuItem.CREDITS:
 			ArcadeSettings.add_credit(1)
+		MenuItem.NEW_SONG:
+			_open_song_form()
 		MenuItem.LED_INPUT_TEST:
 			_open_test_view()
 		MenuItem.COM_PORT:
@@ -174,13 +216,16 @@ func _toggle_com_port() -> void:
 
 
 func _refresh_menu_texts() -> void:
-	if _menu_labels.size() < 5:
+	if _menu_labels.size() < MENU_ITEM_COUNT:
 		return
 
 	_menu_labels[MenuItem.MODE].text = (
 		"MODO: CRÉDITO" if ArcadeSettings.is_credit_mode() else "MODO: LIVRE"
 	)
 	_menu_labels[MenuItem.CREDITS].text = "CRÉDITOS: %d   (B: +1)" % ArcadeSettings.credits
+	_menu_labels[MenuItem.NEW_SONG].text = "MÚSICAS: %d CADASTRADA(S)" % (
+		USER_CATALOG.all_user_songs().size()
+	)
 	_menu_labels[MenuItem.LED_INPUT_TEST].text = "TESTE DE LEDS E INPUTS"
 
 	var client := get_node_or_null("/root/LedClient")
@@ -296,9 +341,9 @@ func _build_menu(screen: Vector2) -> void:
 	title.add_theme_color_override("font_color", Color(0.10, 0.85, 1.0, 1.0))
 	_panel.add_child(title)
 
-	var start_y: float = panel_size.y * 0.225
-	var row_height: float = panel_size.y * 0.115
-	for i in range(5):
+	var start_y: float = panel_size.y * 0.205
+	var row_height: float = panel_size.y * 0.102
+	for i in range(MENU_ITEM_COUNT):
 		var row := Panel.new()
 		row.position = Vector2(panel_size.x * 0.14, start_y + row_height * float(i))
 		row.size = Vector2(panel_size.x * 0.72, row_height * 0.78)
@@ -327,6 +372,346 @@ func _build_menu(screen: Vector2) -> void:
 	hint.size = Vector2(panel_size.x * 0.80, panel_size.y * 0.08)
 	hint.add_theme_color_override("font_color", Color(0.60, 0.66, 0.78, 1.0))
 	_panel.add_child(hint)
+
+
+# ---------------------------------------------------------------
+# CADASTRO RAPIDO DE MUSICA
+# ---------------------------------------------------------------
+## Formulario de servico: nome, audio, video, capa e BPM. Os arquivos
+## escolhidos sao COPIADOS para user:// (ver user_catalog.gd), entao a
+## musica continua funcionando mesmo que o operador mova ou apague o
+## arquivo original depois.
+func _open_song_form() -> void:
+	if _song_layer == null or not is_instance_valid(_song_layer):
+		_build_song_form(get_viewport_rect().size)
+
+	_in_song_form = true
+	_panel.visible = false
+	_song_layer.visible = true
+	# O formulario precisa de mouse e teclado; o resto do gabinete roda
+	# com o cursor escondido.
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	_refresh_song_form()
+	_song_name_edit.grab_focus()
+
+
+func _close_song_form() -> void:
+	_in_song_form = false
+	if _song_layer != null and is_instance_valid(_song_layer):
+		_song_layer.visible = false
+	if _panel != null and is_instance_valid(_panel):
+		_panel.visible = true
+	Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
+	_refresh_menu_texts()
+
+
+func _build_song_form(screen: Vector2) -> void:
+	var font: Font = _load_font()
+
+	_song_layer = CanvasLayer.new()
+	_song_layer.layer = 30
+	_song_layer.visible = false
+	add_child(_song_layer)
+
+	var panel_size := Vector2(
+		minf(screen.x * 0.78, _radius * 2.30),
+		minf(screen.y * 0.74, _radius * 1.86)
+	)
+	_song_panel = Panel.new()
+	_song_panel.position = _center - panel_size * 0.5
+	_song_panel.size = panel_size
+	_song_panel.add_theme_stylebox_override("panel", _panel_style())
+	_song_layer.add_child(_song_panel)
+
+	var margin: float = panel_size.x * 0.055
+	var width: float = panel_size.x - margin * 2.0
+	var line: float = panel_size.y * 0.082
+
+	var title: Label = _make_label(
+		"NOVA MÚSICA",
+		int(panel_size.y * 0.070),
+		HORIZONTAL_ALIGNMENT_CENTER,
+		font
+	)
+	title.position = Vector2(margin, panel_size.y * 0.035)
+	title.size = Vector2(width, line)
+	title.add_theme_color_override("font_color", Color(0.10, 0.85, 1.0, 1.0))
+	_song_panel.add_child(title)
+
+	var y: float = panel_size.y * 0.145
+
+	# --- nome ---
+	_add_form_caption(font, "NOME DA MÚSICA", margin, y, width, line * 0.52)
+	_song_name_edit = LineEdit.new()
+	_song_name_edit.position = Vector2(margin, y + line * 0.50)
+	_song_name_edit.size = Vector2(width * 0.66, line * 0.86)
+	_song_name_edit.placeholder_text = "EX: MINHA MÚSICA"
+	_song_name_edit.max_length = 40
+	_song_panel.add_child(_song_name_edit)
+
+	# --- bpm ---
+	var bpm_caption: Label = _make_label(
+		"BPM",
+		int(panel_size.y * 0.030),
+		HORIZONTAL_ALIGNMENT_LEFT,
+		font
+	)
+	bpm_caption.position = Vector2(margin + width * 0.70, y)
+	bpm_caption.size = Vector2(width * 0.30, line * 0.52)
+	bpm_caption.add_theme_color_override("font_color", Color(0.66, 0.74, 0.88, 1.0))
+	_song_panel.add_child(bpm_caption)
+
+	_song_bpm_edit = SpinBox.new()
+	_song_bpm_edit.position = Vector2(margin + width * 0.70, y + line * 0.50)
+	_song_bpm_edit.size = Vector2(width * 0.30, line * 0.86)
+	_song_bpm_edit.min_value = 40
+	_song_bpm_edit.max_value = 260
+	_song_bpm_edit.step = 1
+	_song_bpm_edit.value = 120
+	_song_panel.add_child(_song_bpm_edit)
+
+	y += line * 1.65
+
+	# --- arquivos ---
+	_song_audio_label = _add_file_row(
+		font, "ÁUDIO (obrigatório)", margin, y, width, line, "_pick_audio"
+	)
+	y += line * 1.30
+	_song_video_label = _add_file_row(
+		font, "VÍDEO .ogv (opcional)", margin, y, width, line, "_pick_video"
+	)
+	y += line * 1.30
+	_song_cover_label = _add_file_row(
+		font, "CAPA (opcional)", margin, y, width, line, "_pick_cover"
+	)
+	y += line * 1.42
+
+	# --- acoes ---
+	var save_button := Button.new()
+	save_button.text = "CADASTRAR MÚSICA"
+	save_button.position = Vector2(margin, y)
+	save_button.size = Vector2(width * 0.48, line * 0.95)
+	save_button.pressed.connect(_save_new_song)
+	_song_panel.add_child(save_button)
+
+	var close_button := Button.new()
+	close_button.text = "FECHAR"
+	close_button.position = Vector2(margin + width * 0.52, y)
+	close_button.size = Vector2(width * 0.22, line * 0.95)
+	close_button.pressed.connect(_close_song_form)
+	_song_panel.add_child(close_button)
+
+	var remove_button := Button.new()
+	remove_button.text = "APAGAR ÚLTIMA"
+	remove_button.position = Vector2(margin + width * 0.76, y)
+	remove_button.size = Vector2(width * 0.24, line * 0.95)
+	remove_button.pressed.connect(_remove_last_song)
+	_song_panel.add_child(remove_button)
+
+	y += line * 1.20
+
+	_song_status_label = _make_label("", int(panel_size.y * 0.030), HORIZONTAL_ALIGNMENT_LEFT, font)
+	_song_status_label.position = Vector2(margin, y)
+	_song_status_label.size = Vector2(width, line * 0.60)
+	_song_status_label.clip_text = true
+	_song_panel.add_child(_song_status_label)
+
+	_song_list_label = _make_label("", int(panel_size.y * 0.026), HORIZONTAL_ALIGNMENT_LEFT, font)
+	_song_list_label.position = Vector2(margin, y + line * 0.62)
+	_song_list_label.size = Vector2(width, line * 0.80)
+	_song_list_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_song_list_label.clip_text = true
+	_song_list_label.add_theme_color_override("font_color", Color(0.62, 0.70, 0.84, 1.0))
+	_song_panel.add_child(_song_list_label)
+
+
+func _add_form_caption(
+	font: Font,
+	text_value: String,
+	x: float,
+	y: float,
+	width: float,
+	height: float
+) -> Label:
+	var caption: Label = _make_label(
+		text_value,
+		int(_song_panel.size.y * 0.030),
+		HORIZONTAL_ALIGNMENT_LEFT,
+		font
+	)
+	caption.position = Vector2(x, y)
+	caption.size = Vector2(width, height)
+	caption.add_theme_color_override("font_color", Color(0.66, 0.74, 0.88, 1.0))
+	_song_panel.add_child(caption)
+	return caption
+
+
+## Linha de arquivo: legenda, caminho escolhido e botao que abre o
+## seletor de arquivos do sistema.
+func _add_file_row(
+	font: Font,
+	caption_text: String,
+	x: float,
+	y: float,
+	width: float,
+	line: float,
+	handler: String
+) -> Label:
+	_add_form_caption(font, caption_text, x, y, width, line * 0.52)
+
+	var value: Label = _make_label(
+		"— nenhum arquivo —",
+		int(_song_panel.size.y * 0.028),
+		HORIZONTAL_ALIGNMENT_LEFT,
+		font
+	)
+	value.position = Vector2(x, y + line * 0.50)
+	value.size = Vector2(width * 0.72, line * 0.62)
+	value.clip_text = true
+	value.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_song_panel.add_child(value)
+
+	var button := Button.new()
+	button.text = "ESCOLHER..."
+	button.position = Vector2(x + width * 0.76, y + line * 0.44)
+	button.size = Vector2(width * 0.24, line * 0.72)
+	button.pressed.connect(Callable(self, handler))
+	_song_panel.add_child(button)
+
+	return value
+
+
+func _pick_audio() -> void:
+	_open_file_dialog(
+		"Escolha o áudio da música",
+		PackedStringArray(["*.mp3 ; MP3", "*.ogg ; OGG", "*.wav ; WAV"]),
+		"_on_audio_chosen"
+	)
+
+
+func _pick_video() -> void:
+	_open_file_dialog(
+		"Escolha o vídeo de fundo",
+		PackedStringArray(["*.ogv ; Vídeo Theora (.ogv)"]),
+		"_on_video_chosen"
+	)
+
+
+func _pick_cover() -> void:
+	_open_file_dialog(
+		"Escolha a capa",
+		PackedStringArray(["*.png ; PNG", "*.jpg, *.jpeg ; JPG", "*.webp ; WEBP"]),
+		"_on_cover_chosen"
+	)
+
+
+func _open_file_dialog(
+	title: String,
+	filters: PackedStringArray,
+	handler: String
+) -> void:
+	var dialog := FileDialog.new()
+	dialog.title = title
+	dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	# ACCESS_FILESYSTEM: o operador escolhe de qualquer pasta do
+	# computador, nao so de dentro do projeto.
+	dialog.access = FileDialog.ACCESS_FILESYSTEM
+	dialog.filters = filters
+	dialog.use_native_dialog = true
+	dialog.size = Vector2i(900, 600)
+	dialog.file_selected.connect(Callable(self, handler))
+	dialog.close_requested.connect(dialog.queue_free)
+	dialog.canceled.connect(dialog.queue_free)
+	add_child(dialog)
+	dialog.popup_centered()
+
+
+func _on_audio_chosen(path: String) -> void:
+	_song_audio_path = path
+	if _song_name_edit != null and _song_name_edit.text.strip_edges().is_empty():
+		# Sugere o nome pelo proprio arquivo: na pratica e o que o
+		# operador digitaria de qualquer jeito.
+		_song_name_edit.text = path.get_file().get_basename().replace("_", " ").to_upper()
+	_refresh_song_form()
+
+
+func _on_video_chosen(path: String) -> void:
+	_song_video_path = path
+	_refresh_song_form()
+
+
+func _on_cover_chosen(path: String) -> void:
+	_song_cover_path = path
+	_refresh_song_form()
+
+
+func _refresh_song_form() -> void:
+	if _song_audio_label == null or not is_instance_valid(_song_audio_label):
+		return
+
+	_song_audio_label.text = (
+		_song_audio_path.get_file() if not _song_audio_path.is_empty() else "— nenhum arquivo —"
+	)
+	_song_video_label.text = (
+		_song_video_path.get_file() if not _song_video_path.is_empty() else "— sem vídeo —"
+	)
+	_song_cover_label.text = (
+		_song_cover_path.get_file() if not _song_cover_path.is_empty() else "— sem capa —"
+	)
+
+	var user_songs: Array = USER_CATALOG.all_user_songs()
+	if user_songs.is_empty():
+		_song_list_label.text = "Nenhuma música cadastrada ainda."
+	else:
+		var names: Array[String] = []
+		for value in user_songs:
+			if value is Dictionary:
+				names.append(str((value as Dictionary).get("title", "?")))
+		_song_list_label.text = "Cadastradas: " + ", ".join(names)
+
+
+func _save_new_song() -> void:
+	var result: Dictionary = USER_CATALOG.add_song(
+		_song_name_edit.text,
+		_song_audio_path,
+		_song_video_path,
+		_song_cover_path,
+		float(_song_bpm_edit.value)
+	)
+
+	if not bool(result.get("ok", false)):
+		_song_status_label.add_theme_color_override("font_color", Color(1.0, 0.42, 0.42, 1.0))
+		_song_status_label.text = str(result.get("erro", "Falha ao cadastrar."))
+		return
+
+	_song_status_label.add_theme_color_override("font_color", Color(0.32, 1.0, 0.62, 1.0))
+	_song_status_label.text = "Música cadastrada! Já aparece no seletor."
+	_song_name_edit.text = ""
+	_song_audio_path = ""
+	_song_video_path = ""
+	_song_cover_path = ""
+	_refresh_song_form()
+
+
+func _remove_last_song() -> void:
+	var user_songs: Array = USER_CATALOG.all_user_songs()
+	if user_songs.is_empty():
+		_song_status_label.add_theme_color_override("font_color", Color(1.0, 0.72, 0.30, 1.0))
+		_song_status_label.text = "Não há música cadastrada para apagar."
+		return
+
+	var last: Variant = user_songs[user_songs.size() - 1]
+	if not last is Dictionary:
+		return
+
+	var title: String = str((last as Dictionary).get("title", "?"))
+	if USER_CATALOG.remove_song(str((last as Dictionary).get("id", ""))):
+		_song_status_label.add_theme_color_override("font_color", Color(0.32, 1.0, 0.62, 1.0))
+		_song_status_label.text = "Removida: " + title
+	else:
+		_song_status_label.add_theme_color_override("font_color", Color(1.0, 0.42, 0.42, 1.0))
+		_song_status_label.text = "Não foi possível remover."
+	_refresh_song_form()
 
 
 # ---------------------------------------------------------------

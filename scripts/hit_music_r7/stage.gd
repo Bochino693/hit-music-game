@@ -7,6 +7,7 @@ const TAP_VISUAL_SCRIPT: Script = preload("res://scripts/hit_music_r7/tap_visual
 const RENDERER_SCRIPT: Script = preload("res://scripts/hit_music_r7/playfield_renderer.gd")
 const LED_CLIENT: Script = preload("res://scripts/hit_music_r7/led_client.gd")
 const TAP_PALETTE: Script = preload("res://scripts/hit_music_r7/tap_palette.gd")
+const USER_CATALOG: Script = preload("res://scripts/hit_music_r7/user_catalog.gd")
 
 enum GameState {
 	PRESENTATION,
@@ -30,6 +31,18 @@ const INPUT_ACTIONS: Array[String] = [
 const SLIDE_CORRIDOR_TOLERANCE_RATIO: float = 0.115
 const SLIDE_SAMPLE_STEP_RATIO: float = 0.045
 const SLIDE_MAX_FORWARD_SPAN: float = 0.16
+
+## Fisica do desenho do arrasto. O progresso LOGICO pode saltar (o
+## avanco por botao pula direto para o proximo ponto do caminho, e um
+## ponteiro rapido varre varios passos num quadro so); o progresso
+## DESENHADO persegue esse alvo a uma velocidade maxima, entao a estrela
+## sempre percorre o trajeto em vez de teleportar. Em fracao de caminho
+## por segundo: 2.6 faz a trilha inteira levar ~0.38s no pior caso —
+## rapido para nao atrasar a leitura, lento para o olho acompanhar.
+const SLIDE_DRAW_SPEED: float = 2.6
+## Quando o alvo ja chegou ao fim, a imagem ganha um empurrao para nao
+## ficar faltando um pedaco depois da nota ter sido resolvida.
+const SLIDE_DRAW_FINISH_SPEED: float = 5.2
 
 const TOP_MARGIN_RATIO: float = 0.022
 const TOP_HEIGHT_RATIO: float = 0.205
@@ -63,10 +76,11 @@ const MUSIC_VOLUME_SMOOTH_SPEED: float = 2.4
 const MUSIC_ENERGY_MISS_PENALTY: float = 0.16
 const MUSIC_ENERGY_HIT_RECOVERY: float = 0.10
 
-# Mesmo amarelo usado na fita do hold (playfield_renderer._draw_hold)
-# e no LED fisico (HOLD_COLOR em stage_final.gd) — o hold e sempre
-# essa cor, nunca a cor de destaque da musica.
-const HOLD_VISUAL_COLOR: Color = TAP_PALETTE.HOLD_YELLOW
+## O hold deixou de ser sempre amarelo: ele usa a cor do proprio evento,
+## igual ao tap. Assim as fitas variam entre as tres cores da mesa e o
+## estouro de cada uma sai na cor dela. HOLD_YELLOW continua existindo
+## como valor de retorno seguro quando o evento nao trouxer indice.
+const HOLD_FALLBACK_COLOR: Color = TAP_PALETTE.HOLD_YELLOW
 
 var _song: Dictionary = {}
 var _difficulty_name: String = "easy"
@@ -190,6 +204,7 @@ func _process(delta: float) -> void:
 			_update_song_time()
 			_spawn_due_events()
 			_update_tap_visuals()
+			_update_slide_draw_progress(delta)
 			_update_notes_and_misses()
 			_update_hud()
 			_update_dynamic_volume(delta)
@@ -607,38 +622,36 @@ func _record_badge_style() -> StyleBoxFlat:
 	return style
 
 
+## Carrega audio, video e capa. Passa por USER_CATALOG porque a musica
+## pode ser de fabrica (res://, importada pelo Godot) ou cadastrada pelo
+## operador (user://, sem importacao — lida em bytes em tempo de
+## execucao). Uma musica de operador sem video continua jogavel.
 func _load_assets() -> void:
 	var audio_path: String = str(_song.get("audio", ""))
-	if ResourceLoader.exists(audio_path):
-		var audio_resource: Resource = load(audio_path)
-		if audio_resource is AudioStream:
-			# A faixa do gameplay precisa terminar de verdade. Se o recurso MP3
-			# vier importado com loop, o sinal finished nunca sera emitido.
-			if audio_resource is AudioStreamMP3:
-				(audio_resource as AudioStreamMP3).loop = false
-			_music_player.stream = audio_resource as AudioStream
-			_music_player.volume_db = -1.0
-			_song_duration = maxf((_music_player.stream as AudioStream).get_length(), 10.0)
+	var audio_stream: AudioStream = USER_CATALOG.load_audio(audio_path)
+	if audio_stream != null:
+		# A faixa do gameplay precisa terminar de verdade. Se o recurso MP3
+		# vier importado com loop, o sinal finished nunca sera emitido.
+		if audio_stream is AudioStreamMP3:
+			(audio_stream as AudioStreamMP3).loop = false
+		_music_player.stream = audio_stream
+		_music_player.volume_db = -1.0
+		_song_duration = maxf(audio_stream.get_length(), 10.0)
 	else:
-		push_error("Audio not found: " + audio_path)
+		push_error("Audio nao carregado: " + audio_path)
 
 	var video_path: String = str(_song.get("video", ""))
-	if ResourceLoader.exists(video_path):
-		var video_resource: Resource = load(video_path)
-		if video_resource is VideoStream:
-			_video_player.stream = video_resource as VideoStream
-			# O MP3 e a fonte sincronizada. O video so fornece audio como fallback.
-			_video_player.volume_db = -80.0 if _music_player.stream != null else -1.0
-		else:
-			push_warning("Arquivo nao e VideoStream: " + video_path)
-	else:
-		push_warning("Video nao encontrado: " + video_path)
+	var video_stream: VideoStream = USER_CATALOG.load_video(video_path)
+	if video_stream != null:
+		_video_player.stream = video_stream
+		# O MP3 e a fonte sincronizada. O video so fornece audio como fallback.
+		_video_player.volume_db = -80.0 if _music_player.stream != null else -1.0
+	elif not video_path.is_empty():
+		push_warning("Video nao carregado: " + video_path)
 
-	var cover_path: String = str(_song.get("cover", ""))
-	if ResourceLoader.exists(cover_path):
-		var cover_resource: Resource = load(cover_path)
-		if cover_resource is Texture2D:
-			_cover.texture = cover_resource as Texture2D
+	var cover_texture: Texture2D = USER_CATALOG.load_cover(str(_song.get("cover", "")))
+	if cover_texture != null:
+		_cover.texture = cover_texture
 	else:
 		_cover.visible = false
 
@@ -654,6 +667,7 @@ func _prepare_chart() -> void:
 		event["_active"] = false
 		event["_holding"] = false
 		event["_visual_progress"] = 0.0
+		event["_draw_progress"] = 0.0
 		if str(event.get("type", "")) == "slide":
 			var path_points: PackedVector2Array = PATH_BUILDER.build(
 				event,
@@ -845,6 +859,33 @@ func _update_tap_visuals() -> void:
 		var node_value: Variant = event.get("_node", null)
 		if node_value is Node2D and is_instance_valid(node_value):
 			node_value.update_visual(_song_time)
+
+
+## Aproxima o progresso desenhado do progresso logico de cada arrasto.
+##
+## O alvo continua exato para a MECANICA (o acerto e imediato, o jogador
+## nao perde nada) e a IMAGEM corre atras dele, que e o que se le como
+## movimento. Sem isto a estrela saltava de um ponto do caminho para o
+## outro e o gesto parecia acontecer do nada.
+func _update_slide_draw_progress(delta: float) -> void:
+	for event_value in _events:
+		if not event_value is Dictionary:
+			continue
+		var event: Dictionary = event_value as Dictionary
+		if str(event.get("type", "")) != "slide":
+			continue
+
+		var target: float = clampf(float(event.get("_visual_progress", 0.0)), 0.0, 1.0)
+		var drawn: float = clampf(float(event.get("_draw_progress", 0.0)), 0.0, 1.0)
+		if is_equal_approx(drawn, target):
+			continue
+
+		var speed: float = (
+			SLIDE_DRAW_FINISH_SPEED
+			if target >= 0.999 or bool(event.get("_resolved", false))
+			else SLIDE_DRAW_SPEED
+		)
+		event["_draw_progress"] = move_toward(drawn, target, delta * speed)
 
 
 func _update_notes_and_misses() -> void:
@@ -1270,6 +1311,7 @@ func _begin_slide(
 	event["_active"] = true
 	event["_source"] = source
 	event["_visual_progress"] = 0.0
+	event["_draw_progress"] = 0.0
 
 	var start_point: Vector2 = _center
 	var points_value: Variant = event.get("_path_points", PackedVector2Array())
@@ -1391,10 +1433,13 @@ func _event_hit_position(event: Dictionary) -> Vector2:
 			return _center.lerp(points[0], eased)
 		var lengths_value: Variant = event.get("_path_lengths", {})
 		var lengths: Dictionary = lengths_value if lengths_value is Dictionary else {}
+		# Usa o progresso DESENHADO: o estouro tem de sair de onde a
+		# estrela esta na tela, nao de onde a mecanica ja considerou que
+		# ela chegou.
 		return PATH_BUILDER.point_at_cached(
 			points,
 			lengths,
-			clampf(float(event.get("_visual_progress", 0.0)), 0.0, 1.0)
+			clampf(float(event.get("_draw_progress", 0.0)), 0.0, 1.0)
 		)
 
 	if type_name == "tap":
@@ -1408,15 +1453,12 @@ func _event_hit_position(event: Dictionary) -> Vector2:
 	return _center.lerp(target, eased)
 
 
+## Tap, hold e arrasto seguem a MESMA regra: a cor e a do proprio
+## objeto, dada pelo color_index. Nenhum tipo usa mais a cor de tema da
+## musica, entao um objeto nunca estoura numa cor que nao e a dele.
 func _event_color(event: Dictionary) -> Color:
-	var type_name: String = str(event.get("type", "tap"))
-	if type_name == "hold":
-		# Hold e sempre amarelo — mesma cor da fita/capsula desenhada
-		# (_draw_capsule) e do LED fisico (HOLD_COLOR em stage_final.gd).
-		return HOLD_VISUAL_COLOR
-	# Arrasto tambem segue a cor do proprio objeto. Antes ele usava a cor
-	# de tema da musica, entao uma estrela ciano podia estourar num efeito
-	# amarelo/vermelho que nao tinha nada a ver com o que estava na tela.
+	if not event.has("color_index"):
+		return HOLD_FALLBACK_COLOR
 	return _tap_color(int(event.get("color_index", 0)))
 
 
@@ -1601,7 +1643,10 @@ func _expire_result() -> void:
 func _activate_result_action() -> void:
 	if not _can_act_on_result():
 		return
-	if ArcadeSettings.is_credit_mode() and not ArcadeSettings.try_consume_credit():
+	# So VERIFICA a ficha; quem gasta e _confirm_difficulty na proxima
+	# tela. Consumir aqui tambem cobrava duas fichas por partida: uma no
+	# modal e outra ao confirmar a dificuldade.
+	if not ArcadeSettings.has_credit():
 		return
 
 	_result_transitioning = true
@@ -1616,7 +1661,9 @@ func _activate_result_action() -> void:
 func _activate_result_change_song() -> void:
 	if not _can_act_on_result():
 		return
-	if ArcadeSettings.is_credit_mode() and ArcadeSettings.credits <= 0:
+	# Tambem so verifica: a ficha e gasta ao confirmar a dificuldade da
+	# musica escolhida no seletor.
+	if not ArcadeSettings.has_credit():
 		return
 
 	_result_transitioning = true

@@ -9,6 +9,9 @@ extends "res://scripts/hit_music_r7/stage_v11.gd"
 const GAMEPLAY_TAP_PALETTE: Script = preload("res://scripts/hit_music_r7/tap_palette.gd")
 const LED_PRELIGHT_SECONDS: float = 1.18
 const LED_LATE_SECONDS: float = 0.18
+## Cor de seguranca do hold. O normal e o LED usar _event_color(event),
+## que segue a cor do proprio objeto; isto so entra se o evento chegar
+## sem indice de cor.
 const HOLD_COLOR: Color = GAMEPLAY_TAP_PALETTE.HOLD_YELLOW
 
 var _r21_was_playing: bool = false
@@ -157,12 +160,15 @@ func _publish_game_frame_r21() -> void:
 		var end_time := _event_end_time(event, start_time)
 
 		if type_name == "hold":
-			# Hold: amarelo desde a aproximação até o final.
+			# Hold: aceso desde a aproximação até o final.
 			if (
 				_song_time >= start_time - LED_PRELIGHT_SECONDS
 				and _song_time <= end_time
 			):
-				colors[lane] = HOLD_COLOR
+				# O botao acende na cor da fita daquele hold, nao num
+				# amarelo fixo: a mesa passa a mostrar a mesma variacao
+				# de cor que a tela.
+				colors[lane] = _event_color(event)
 				hold_active[lane] = true
 				best_distance[lane] = 0.0
 			continue

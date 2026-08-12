@@ -16,13 +16,20 @@ This refactor keeps the original cabinet flow:
 - Eight fixed white lane markers.
 - No stationary tazo at the target.
 - The tazo entity is used only by moving TAP notes.
-- HOLD notes are a thin yellow energy ribbon with a draining core and
-  travelling pulses. In the last 0.16 s the ribbon retracts into the target
+- HOLD notes are a thin energy ribbon in the note's own tazo color, with a
+  draining core and travelling pulses. In the last 0.16 s the ribbon retracts into the target
   and the burst picks it up from there, so there is no visual jump between
   note and effect.
-- SLIDE notes use chevrons and a star drawn in the note's own tazo color
-  (cyan/yellow/red). Four arrow silhouettes and four star silhouettes rotate
-  between slides; the color never changes family, only the shape does.
+- SLIDE notes use chevrons and a star drawn in the note's own tazo color.
+  Four arrow silhouettes and four star silhouettes rotate between slides; the
+  color never changes family, only the shape does.
+- The slide star has its own draw physics: the mechanical progress may jump
+  (a button press advances straight to the next path point), but the drawn
+  progress chases it at a capped speed, so the star always travels the path
+  instead of teleporting. The rail and arrows fade in during the approach.
+- Tazo colors follow the sprite sheet frame order: frame 0 yellow, frame 1 red,
+  frame 2 cyan (`tap_palette.color_for_index`). Changing that order desyncs
+  every effect from the art.
 - TAP hits use layered diamonds.
 - Every hit effect uses the color of the object that produced it — a cyan tazo
   can never burst in yellow.
@@ -93,6 +100,17 @@ Easy and hard are genuinely different charts, not the same chart thinned out:
 easy walks in whole beats and only lands on strong beats, hard walks in eighths
 and uses offbeats and syncopation. They also use different lane steps (3 vs 5,
 both coprime with 8, so all eight buttons are used) and separate RNG seeds.
+
+## Operator-registered songs
+
+The Settings screen (F9) can register a song from the cabinet: name, audio,
+optional video, optional cover and BPM. The chosen files are copied into
+`user://` (an exported build cannot write to `res://`), the entry goes to
+`user://hit_music_user_songs.json`, and `catalog.all_songs()` merges it with the
+factory list — same selector, same ranking, same chart generation. Colors are
+sampled from the cover when there is one. All operator songs share
+`scenes/user_song.tscn`, which resolves which song to play from the tree meta,
+because a new `.tscn` cannot be generated at runtime.
 
 ## Song catalog
 

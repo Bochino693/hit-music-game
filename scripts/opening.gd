@@ -238,6 +238,7 @@ class PortalCircular:
 
 # --- Constantes físicas da mesa redonda (iguais às do Rick and Morty) ---
 const SETTINGS_GATE: Script = preload("res://scripts/hit_music_r7/settings_gate.gd")
+const CATALOG: Script = preload("res://scripts/hit_music_r7/catalog.gd")
 
 const RAIO_FISICO_CM: float = 48.0
 const DIAMETRO_FISICO_CM: float = RAIO_FISICO_CM * 2.0
@@ -361,6 +362,7 @@ func _ready() -> void:
 	get_viewport().size_changed.connect(_on_tela_redimensionada)
 	_sincronizar_com_arcade_settings()
 	ArcadeSettings.changed.connect(_sincronizar_com_arcade_settings)
+	ArcadeSettings.credit_inserted.connect(_ao_inserir_credito)
 
 
 func _process(delta: float) -> void:
@@ -1021,6 +1023,12 @@ func _criar_hud_superior(tam_tela: Vector2) -> void:
 	_atualizar_hud_operacao(true)
 
 
+## Os tamanhos de fonte agora saem da ALTURA do painel, nao da largura
+## da tela. Antes eram largura * ratio: numa tela larga (ultrawide, por
+## exemplo) a fonte crescia com a largura enquanto as caixas continuavam
+## presas a altura, e o texto passava por cima do campo de baixo. Cada
+## rotulo tambem passou a recortar o proprio texto, entao nada vaza para
+## o vizinho em nenhuma resolucao.
 func _criar_label_hud(
 	tamanho_ratio: float,
 	cor: Color,
@@ -1028,7 +1036,7 @@ func _criar_label_hud(
 ) -> Label:
 	var config := LabelSettings.new()
 	config.font = _carregar_fonte(FONTE_TEXTO)
-	config.font_size = maxi(18, int(get_viewport_rect().size.x * tamanho_ratio))
+	config.font_size = _tamanho_fonte_hud(tamanho_ratio)
 	config.font_color = cor
 	config.outline_size = 3
 	config.outline_color = Color(0.0, 0.0, 0.0, 0.90)
@@ -1041,7 +1049,60 @@ func _criar_label_hud(
 	label.horizontal_alignment = alinhamento
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.clip_text = true
+	label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	label.set_meta("hud_ratio", tamanho_ratio)
 	return label
+
+
+## tamanho_ratio continua sendo o valor antigo (fracao da largura), so
+## que reinterpretado: vira uma fracao da altura do painel, com teto
+## pela largura para telas muito estreitas.
+func _tamanho_fonte_hud(tamanho_ratio: float) -> int:
+	var tela: Vector2 = get_viewport_rect().size
+	var altura_painel: float = tela.y * HUD_ALTURA_RATIO
+	var por_altura: float = altura_painel * (tamanho_ratio / 0.032) * 0.235
+	var teto_largura: float = tela.x * 0.030
+	return maxi(14, int(minf(por_altura, teto_largura)))
+
+
+## Reduz a fonte ate o texto caber na largura util do rotulo.
+##
+## SEMPRE parte do tamanho base (guardado em meta no momento da criacao)
+## antes de encolher. Sem isso o rotulo so diminuiria: uma mensagem
+## longa encolhia a fonte e a proxima, curta, continuaria pequena para
+## sempre, porque esta funcao roda a cada troca de texto.
+func _ajustar_fonte_para_caber(label: Label, largura_max: float) -> void:
+	if label == null or not is_instance_valid(label):
+		return
+	if label.label_settings == null or label.label_settings.font == null:
+		return
+
+	var base: int = _tamanho_fonte_hud(float(label.get_meta("hud_ratio", 0.022)))
+	label.label_settings.font_size = base
+
+	if largura_max <= 1.0 or label.text.is_empty():
+		return
+
+	var fonte: Font = label.label_settings.font
+	var tamanho: int = base
+	var minimo: int = maxi(12, int(float(base) * 0.55))
+	while tamanho > minimo:
+		var maior: float = 0.0
+		for linha in label.text.split("\n"):
+			maior = maxf(
+				maior,
+				fonte.get_string_size(
+					linha,
+					HORIZONTAL_ALIGNMENT_LEFT,
+					-1.0,
+					tamanho
+				).x
+			)
+		if maior <= largura_max:
+			break
+		tamanho -= 1
+	label.label_settings.font_size = tamanho
 
 
 func _carregar_fonte(caminho: String) -> Font:
@@ -1137,8 +1198,11 @@ func _posicionar_hud_superior(tam_tela: Vector2) -> void:
 	_hud_borda.position = Vector2.ZERO
 	_hud_borda.size = _hud_superior.size
 
+	# Tres colunas que nunca se encostam: LOGO | TEXTO | STATUS. A coluna
+	# do meio recebe o que sobra, e as tres faixas de texto ocupam bandas
+	# verticais separadas dentro dela.
 	var padding: float = maxf(14.0, largura * 0.022)
-	var logo_ratio: float = 0.19 if modo_credito else 0.24
+	var logo_ratio: float = 0.19 if modo_credito else 0.22
 	var logo_largura: float = minf(altura * 1.42, largura * logo_ratio)
 	_hud_logo.position = Vector2(padding, padding * 0.55)
 	_hud_logo.size = Vector2(logo_largura, altura - padding * 1.10)
@@ -1146,23 +1210,42 @@ func _posicionar_hud_superior(tam_tela: Vector2) -> void:
 	_hud_divisor.size = Vector2(maxf(2.0, largura * 0.0025), altura * 0.68)
 
 	var texto_x: float = _hud_divisor.position.x + _hud_divisor.size.x + padding * 0.72
-	var status_largura: float = largura * (0.28 if modo_credito else 0.24)
-	var texto_largura: float = maxf(100.0, largura - texto_x - status_largura - padding * 1.35)
-	_hud_modo.position = Vector2(texto_x, altura * 0.10)
-	_hud_modo.size = Vector2(texto_largura, altura * 0.28)
-	_hud_instrucao.position = Vector2(texto_x, altura * 0.38)
-	_hud_instrucao.size = Vector2(texto_largura, altura * 0.25)
-	_hud_instrucao_base_x = texto_x
-	_hud_info.position = Vector2(texto_x, altura * 0.66)
-	_hud_info.size = Vector2(texto_largura, altura * 0.20)
-
+	var status_largura: float = largura * (0.26 if modo_credito else 0.22)
 	var status_x: float = largura - status_largura - padding
+	# A coluna de texto termina ANTES do cartao de status comecar, com um
+	# respiro de um padding inteiro. Antes a largura era calculada por
+	# subtracao solta e, dependendo da proporcao da tela, o texto podia
+	# alcancar o cartao.
+	var texto_largura: float = maxf(120.0, status_x - texto_x - padding)
+
+	_hud_modo.position = Vector2(texto_x, altura * 0.11)
+	_hud_modo.size = Vector2(texto_largura, altura * 0.26)
+	_hud_instrucao.position = Vector2(texto_x, altura * 0.40)
+	_hud_instrucao.size = Vector2(texto_largura, altura * 0.24)
+	_hud_instrucao_base_x = texto_x
+	_hud_info.position = Vector2(texto_x, altura * 0.67)
+	_hud_info.size = Vector2(texto_largura, altura * 0.19)
+
 	_hud_status_fundo.position = Vector2(status_x, altura * 0.14)
 	_hud_status_fundo.size = Vector2(status_largura, altura * 0.66)
-	_hud_creditos.position = Vector2(status_x, altura * 0.18)
-	_hud_creditos.size = Vector2(status_largura, altura * 0.58)
-	_hud_status_livre.position = Vector2(status_x, altura * 0.18)
-	_hud_status_livre.size = Vector2(status_largura, altura * 0.58)
+	# O rotulo fica DENTRO do cartao, com margem propria — antes ocupava
+	# exatamente a mesma caixa e o texto encostava na borda.
+	var status_interno: float = status_largura * 0.86
+	_hud_creditos.position = Vector2(
+		status_x + (status_largura - status_interno) * 0.5,
+		altura * 0.19
+	)
+	_hud_creditos.size = Vector2(status_interno, altura * 0.56)
+	_hud_status_livre.position = _hud_creditos.position
+	_hud_status_livre.size = _hud_creditos.size
+
+	# Reajuste final de fonte: cada campo encolhe se o texto atual nao
+	# couber na largura que sobrou para ele.
+	_ajustar_fonte_para_caber(_hud_modo, texto_largura * 0.98)
+	_ajustar_fonte_para_caber(_hud_instrucao, texto_largura * 0.98)
+	_ajustar_fonte_para_caber(_hud_info, texto_largura * 0.98)
+	_ajustar_fonte_para_caber(_hud_creditos, status_interno * 0.94)
+	_ajustar_fonte_para_caber(_hud_status_livre, status_interno * 0.94)
 
 
 func definir_modo_credito(ativo: bool) -> void:
@@ -1206,13 +1289,16 @@ func _atualizar_hud_operacao(forcar: bool = false) -> void:
 		_hud_status_livre.visible = false
 		_hud_creditos.text = "CRÉDITOS\n%02d" % creditos
 		if creditos > 0:
-			_hud_info.text = "1 CRÉDITO = 1 PARTIDA  •  SALDO PRONTO PARA JOGAR"
+			_hud_info.text = "%d CRÉDITO(S)  •  1 CRÉDITO POR PARTIDA  •  %s" % [
+				creditos,
+				_texto_catalogo()
+			]
 			_hud_instrucao.text = "APERTE START PARA JOGAR"
 			if is_instance_valid(_label_start):
 				_label_start.text = "APERTE START"
 		else:
-			_hud_info.text = "INSIRA CRÉDITO NA MÁQUINA  •  O SALDO ATUALIZA AUTOMATICAMENTE"
-			_hud_instrucao.text = "INSIRA CRÉDITO"
+			_hud_info.text = "INSIRA UM CRÉDITO PARA JOGAR  •  %s" % _texto_catalogo()
+			_hud_instrucao.text = "INSIRA UM CRÉDITO"
 			if is_instance_valid(_label_start):
 				_label_start.text = "INSIRA CRÉDITO"
 	else:
@@ -1223,7 +1309,7 @@ func _atualizar_hud_operacao(forcar: bool = false) -> void:
 		_hud_creditos.visible = false
 		_hud_status_livre.visible = true
 		_hud_status_livre.text = "JOGO\nLIVRE"
-		_hud_info.text = "SEM CRÉDITOS  •  8 TAZOS  •  ESCOLHA SUA MÚSICA E DIFICULDADE"
+		_hud_info.text = "SEM FICHA  •  %s" % _texto_catalogo()
 		if is_instance_valid(_label_start):
 			_label_start.text = "APERTE START"
 
@@ -1231,25 +1317,41 @@ func _atualizar_hud_operacao(forcar: bool = false) -> void:
 	_reiniciar_mensagens_hud()
 
 
+## Informacao de rodape com dado REAL do catalogo, nao texto decorativo.
+## O catalogo e lido uma vez e guardado: e um JSON em disco e este
+## rodape e reavaliado varias vezes por segundo.
+var _catalogo_texto_cache: String = ""
+
+
+func _texto_catalogo() -> String:
+	if not _catalogo_texto_cache.is_empty():
+		return _catalogo_texto_cache
+
+	var musicas: Array = CATALOG.all_songs()
+	if musicas.is_empty():
+		_catalogo_texto_cache = "FÁCIL E DIFÍCIL"
+	else:
+		_catalogo_texto_cache = "%d MÚSICAS  •  FÁCIL E DIFÍCIL" % musicas.size()
+	return _catalogo_texto_cache
+
+
 func _mensagens_hud() -> Array[String]:
 	if modo_credito:
 		if creditos_maquina <= 0:
 			return [
-				"INSIRA CRÉDITO",
+				"INSIRA UM CRÉDITO PARA JOGAR",
 				"AGUARDANDO CRÉDITO",
-				"PREPARE-SE PARA A BATIDA",
 			]
 		return [
 			"APERTE START PARA JOGAR",
-			"CRÉDITO PRONTO",
-			"ESCOLHA SUA MÚSICA",
+			"%d CRÉDITO(S) DISPONÍVEL(IS)" % creditos_maquina,
+			"ESCOLHA A MÚSICA E A DIFICULDADE",
 			"TOQUE • SEGURE • ARRASTE",
 		]
 	return [
 		"APERTE START PARA JOGAR",
+		"ESCOLHA A MÚSICA E A DIFICULDADE",
 		"TOQUE • SEGURE • ARRASTE",
-		"8 TAZOS • UMA BATIDA",
-		"SINTA A MÚSICA",
 	]
 
 
@@ -1278,6 +1380,9 @@ func _mostrar_proxima_mensagem_hud() -> void:
 		_hud_mensagem_tween.kill()
 
 	_hud_instrucao.text = mensagens[_hud_mensagem_index]
+	# A mensagem muda de comprimento a cada troca; a fonte precisa ser
+	# remedida, senao a frase longa vaza para fora da coluna de texto.
+	_ajustar_fonte_para_caber(_hud_instrucao, _hud_instrucao.size.x * 0.98)
 	_hud_instrucao.modulate.a = 0.0
 	_hud_instrucao.position.x = _hud_instrucao_base_x + 18.0
 
@@ -1377,6 +1482,9 @@ func _ao_apertar_start() -> void:
 	if _ja_iniciando or _portal_entrada_em_andamento:
 		return
 	if modo_credito and creditos_maquina <= 0:
+		# Antes o START sem credito nao dava retorno nenhum: a tela ficava
+		# igual e parecia que o botao estava quebrado. Agora avisa.
+		_mostrar_aviso_credito()
 		_atualizar_hud_operacao(true)
 		return
 	_ja_iniciando = true
@@ -1386,6 +1494,72 @@ func _ao_apertar_start() -> void:
 		_sfx_start.play()
 	_arduino_enviar_forcado("READY")
 	_abaixar_musica_e_abrir_seletor()
+
+
+var _aviso_credito: Label
+var _aviso_credito_tween: Tween
+var _pulso_credito_tween: Tween
+
+
+## Aviso grande de "INSIRA UM CRÉDITO", disparado quando o jogador
+## aperta START sem saldo. Aparece por cima do HUD, pisca e some
+## sozinho — nao trava a tela nem exige outra acao.
+func _mostrar_aviso_credito() -> void:
+	if _hud_superior_layer == null or not is_instance_valid(_hud_superior_layer):
+		return
+
+	if _aviso_credito == null or not is_instance_valid(_aviso_credito):
+		_aviso_credito = _criar_label_hud(0.034, Color(1.0, 0.82, 0.16), HORIZONTAL_ALIGNMENT_CENTER)
+		_aviso_credito.name = "AvisoCredito"
+		_aviso_credito.label_settings.font = _carregar_fonte(FONTE_TITULO)
+		_aviso_credito.label_settings.outline_size = 6
+		_hud_superior_layer.add_child(_aviso_credito)
+
+	var tela: Vector2 = get_viewport_rect().size
+	_aviso_credito.text = "INSIRA UM CRÉDITO PARA JOGAR"
+	_aviso_credito.size = Vector2(tela.x * 0.72, tela.y * 0.070)
+	_aviso_credito.position = Vector2(
+		tela.x * 0.14,
+		tela.y * (HUD_MARGEM_RATIO + HUD_ALTURA_RATIO) + tela.y * 0.030
+	)
+	_ajustar_fonte_para_caber(_aviso_credito, _aviso_credito.size.x * 0.96)
+	_aviso_credito.visible = true
+	_aviso_credito.modulate.a = 1.0
+
+	if _aviso_credito_tween != null and _aviso_credito_tween.is_valid():
+		_aviso_credito_tween.kill()
+	_aviso_credito_tween = _criar_tween_seguro()
+	if _aviso_credito_tween == null:
+		return
+	_aviso_credito_tween.set_trans(Tween.TRANS_SINE)
+	for _piscada in range(3):
+		_aviso_credito_tween.tween_property(_aviso_credito, "modulate:a", 0.25, 0.22)
+		_aviso_credito_tween.tween_property(_aviso_credito, "modulate:a", 1.0, 0.22)
+	_aviso_credito_tween.tween_property(_aviso_credito, "modulate:a", 0.0, 0.55)
+
+
+## Cada ficha inserida soma no contador e da um pulso no cartao: o
+## jogador ve o credito entrar, em vez de so um numero trocando.
+func _ao_inserir_credito(total: int) -> void:
+	creditos_maquina = clampi(total, 0, 999)
+	_atualizar_hud_operacao(true)
+
+	if _aviso_credito != null and is_instance_valid(_aviso_credito):
+		_aviso_credito.visible = false
+
+	if _hud_creditos == null or not is_instance_valid(_hud_creditos):
+		return
+
+	_hud_creditos.pivot_offset = _hud_creditos.size * 0.5
+	if _pulso_credito_tween != null and _pulso_credito_tween.is_valid():
+		_pulso_credito_tween.kill()
+	_pulso_credito_tween = _criar_tween_seguro()
+	if _pulso_credito_tween == null:
+		return
+	_hud_creditos.scale = Vector2(1.24, 1.24)
+	_pulso_credito_tween.set_trans(Tween.TRANS_BACK)
+	_pulso_credito_tween.set_ease(Tween.EASE_OUT)
+	_pulso_credito_tween.tween_property(_hud_creditos, "scale", Vector2.ONE, 0.34)
 
 
 # ---------------------------------------------------------------

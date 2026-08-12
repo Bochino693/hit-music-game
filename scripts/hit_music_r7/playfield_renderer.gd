@@ -266,10 +266,16 @@ func _draw() -> void:
 			if not event_value is Dictionary:
 				continue
 			var event: Dictionary = event_value as Dictionary
-			if bool(event.get("_resolved", false)):
-				continue
-
 			var type_name: String = str(event.get("type", "tap"))
+
+			if bool(event.get("_resolved", false)):
+				# Um arrasto resolvido continua desenhado enquanto a
+				# estrela nao terminou de percorrer o trajeto. Sem isso
+				# ela sumia no meio do caminho quando o acerto era
+				# reconhecido antes de a imagem alcancar o fim.
+				if type_name != "slide" or not _slide_still_running(event):
+					continue
+
 			if type_name == "hold":
 				_draw_hold(event)
 			elif type_name == "slide":
@@ -1468,11 +1474,8 @@ func _draw_lane_energy() -> void:
 			continue
 
 		var position_value: Vector2 = lane_positions[lane]
-		var color: Color = (
-			TAP_PALETTE.HOLD_YELLOW
-			if type_name == "hold"
-			else TAP_PALETTE.color_for_index(int(event.get("color_index", 0)))
-		)
+		# Tap e hold usam a mesma regra de cor: a do proprio objeto.
+		var color: Color = TAP_PALETTE.color_for_index(int(event.get("color_index", 0)))
 		var size: float = radius * (0.028 + progress * 0.032)
 		draw_arc(
 			position_value,
@@ -1541,12 +1544,15 @@ func _draw_hold(event: Dictionary) -> void:
 	var tail: Vector2 = head - direction * length
 	var width: float = radius * 0.030 * float(difficulty.get("hold_width", 1.0))
 	var holding: bool = bool(event.get("_holding", false))
+	# A fita usa a cor do proprio hold (mesmo color_index dos taps), nao
+	# mais um amarelo unico para todos.
+	var color: Color = TAP_PALETTE.color_for_index(int(event.get("color_index", 0)))
 
 	_draw_hold_ribbon(
 		tail,
 		head,
 		width,
-		TAP_PALETTE.HOLD_YELLOW,
+		color,
 		holding,
 		hold_progress,
 		1.0 - release
@@ -1691,6 +1697,14 @@ func _draw_hold_target(
 		true
 	)
 
+## O arrasto ainda tem imagem a mostrar? Vale enquanto o progresso
+## desenhado nao alcancou o logico.
+func _slide_still_running(event: Dictionary) -> bool:
+	var target: float = clampf(float(event.get("_visual_progress", 0.0)), 0.0, 1.0)
+	var drawn: float = clampf(float(event.get("_draw_progress", 0.0)), 0.0, 1.0)
+	return drawn < target - 0.005
+
+
 func _draw_slide(event: Dictionary) -> void:
 	if not bool(event.get("_spawned", false)):
 		return
@@ -1724,16 +1738,43 @@ func _draw_slide(event: Dictionary) -> void:
 	var accent: Color = TAP_PALETTE.highlight(color)
 	var arrow_style: int = int(event.get("arrow_style", 0))
 	var star_style: int = int(event.get("star_style", 0))
-	var visual_progress: float = clampf(float(event.get("_visual_progress", 0.0)), 0.0, 1.0)
+	# PROGRESSO LOGICO x PROGRESSO DESENHADO.
+	#
+	# _visual_progress e o valor da mecanica: ele salta (o avanco por
+	# botao pula direto para o proximo ponto do caminho, e o ponteiro
+	# pode varrer varios passos num quadro so). Desenhar esse valor cru
+	# fazia a estrela teleportar — o movimento "acontecia do nada".
+	#
+	# _draw_progress persegue o valor logico com velocidade limitada,
+	# entao a estrela SEMPRE percorre o trajeto: mesmo quando a mecanica
+	# ja considerou a nota adiantada, o olho ve o gesto acontecendo.
+	var target_progress: float = clampf(float(event.get("_visual_progress", 0.0)), 0.0, 1.0)
+	var drawn_progress: float = clampf(float(event.get("_draw_progress", 0.0)), 0.0, 1.0)
 	var active: bool = bool(event.get("_active", false))
-	var arrows_from: float = visual_progress if active else 0.0
+	var arrows_from: float = drawn_progress if active else 0.0
 
-	_draw_slide_rail(points, color)
-	_draw_chevrons(points, lengths, arrows_from, color, accent, arrow_style)
+	# Entrada por fade: a trilha e as setas nascem transparentes durante a
+	# aproximacao e ganham corpo conforme a nota chega. Antes elas
+	# apareciam inteiras de um quadro para o outro.
+	var appear: float = 1.0
+	if song_time < hit_time:
+		appear = clampf(
+			(song_time - (hit_time - approach)) / maxf(approach * 0.55, 0.001),
+			0.0,
+			1.0
+		)
+		appear = appear * appear * (3.0 - 2.0 * appear)
+
+	# Depois de resolvido so a estrela termina o percurso: a trilha e as
+	# setas ja cumpriram o papel e sairiam competindo com o estouro.
+	var resolved: bool = bool(event.get("_resolved", false))
+	if not resolved:
+		_draw_slide_rail(points, color, appear)
+		_draw_chevrons(points, lengths, arrows_from, color, accent, arrow_style, appear)
 
 	var star_position: Vector2
 	var tangent: Vector2
-	var star_progress: float = visual_progress
+	var star_progress: float = drawn_progress
 
 	if song_time < hit_time:
 		var arrival: float = clampf(
@@ -1746,12 +1787,17 @@ func _draw_slide(event: Dictionary) -> void:
 		tangent = (points[0] - center).normalized()
 		star_progress = 0.0
 	else:
-		star_position = PATH_BUILDER.point_at_cached(points, lengths, visual_progress)
-		tangent = PATH_BUILDER.tangent_at_cached(points, lengths, visual_progress)
+		star_position = PATH_BUILDER.point_at_cached(points, lengths, drawn_progress)
+		tangent = PATH_BUILDER.tangent_at_cached(points, lengths, drawn_progress)
 
 	if active:
+		# O rastro cresce com a distancia que a estrela ainda tem para
+		# recuperar: quanto mais ela esta "correndo", mais longo o
+		# borrao, que e o que da leitura de velocidade.
+		var chase: float = clampf(target_progress - drawn_progress, 0.0, 1.0)
+		var ghost_step: float = 0.030 + chase * 0.075
 		for ghost_index in range(1, 4):
-			var ghost_progress: float = maxf(0.0, star_progress - float(ghost_index) * 0.035)
+			var ghost_progress: float = maxf(0.0, star_progress - float(ghost_index) * ghost_step)
 			var ghost_position: Vector2 = PATH_BUILDER.point_at_cached(points, lengths, ghost_progress)
 			var ghost_tangent: Vector2 = PATH_BUILDER.tangent_at_cached(points, lengths, ghost_progress)
 			_draw_star(
@@ -1773,19 +1819,25 @@ func _draw_slide(event: Dictionary) -> void:
 	)
 
 
-func _draw_slide_rail(points: PackedVector2Array, color: Color) -> void:
+func _draw_slide_rail(
+	points: PackedVector2Array,
+	color: Color,
+	appear: float = 1.0
+) -> void:
+	if appear <= 0.02:
+		return
 	for index in range(points.size() - 1):
 		draw_line(
 			points[index],
 			points[index + 1],
-			Color(0.0, 0.0, 0.0, 0.76),
+			Color(0.0, 0.0, 0.0, 0.76 * appear),
 			maxf(8.0, radius * 0.026),
 			true
 		)
 		draw_line(
 			points[index],
 			points[index + 1],
-			Color(color.r, color.g, color.b, 0.16),
+			Color(color.r, color.g, color.b, 0.16 * appear),
 			maxf(3.0, radius * 0.008),
 			true
 		)
@@ -1797,8 +1849,11 @@ func _draw_chevrons(
 	start_progress: float,
 	color: Color,
 	accent: Color,
-	style: int = 0
+	style: int = 0,
+	appear: float = 1.0
 ) -> void:
+	if appear <= 0.02:
+		return
 	var size: float = radius * 0.058
 	# O espacamento nasce do TAMANHO REAL da seta escolhida, com folga
 	# de 35%. Antes era um valor fixo (0.052 * raio) menor que a propria
@@ -1819,6 +1874,16 @@ func _draw_chevrons(
 		var tangent: Vector2 = PATH_BUILDER.tangent_at_cached(points, lengths, progress)
 		var mix_value: float = 0.10 + 0.18 * float(index % 3)
 		var arrow_color: Color = color.lerp(accent, mix_value)
+		# As setas entram em cascata, da primeira para a ultima, em vez de
+		# a trilha inteira surgir de uma vez.
+		var stagger: float = clampf(
+			appear * float(count) - float(index - start_index) * 0.55,
+			0.0,
+			1.0
+		)
+		if stagger <= 0.02:
+			break
+		arrow_color.a = stagger
 		_draw_chevron(position_value, tangent, size, arrow_color, style)
 
 

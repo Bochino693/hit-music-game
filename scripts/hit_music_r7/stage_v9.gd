@@ -112,6 +112,7 @@ func _prepare_chart() -> void:
 		event["_active"] = false
 		event["_holding"] = false
 		event["_visual_progress"] = 0.0
+		event["_draw_progress"] = 0.0
 
 		if str(event.get("type", "")) == "slide":
 			var path_points: PackedVector2Array = PATH_BUILDER.build(

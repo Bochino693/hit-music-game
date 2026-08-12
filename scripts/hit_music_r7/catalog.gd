@@ -2,6 +2,7 @@ extends RefCounted
 
 const CATALOG_PATH: String = "res://data/hit_music_songs.json"
 const RHYTHM: Script = preload("res://scripts/hit_music_r7/rhythm_profile.gd")
+const USER_CATALOG: Script = preload("res://scripts/hit_music_r7/user_catalog.gd")
 
 static func all_songs() -> Array:
 	var file := FileAccess.open(CATALOG_PATH, FileAccess.READ)
@@ -26,6 +27,17 @@ static func all_songs() -> Array:
 		var song: Dictionary = (raw_song as Dictionary).duplicate(true)
 		_prepare_colors(song)
 		result.append(song)
+
+	# Musicas cadastradas pelo operador entram no fim da lista. Do ponto
+	# de vista do jogo nao ha diferenca: mesmo seletor, mesmo ranking,
+	# mesma geracao de fase.
+	for user_song in USER_CATALOG.all_user_songs():
+		if not user_song is Dictionary:
+			continue
+		var extra: Dictionary = (user_song as Dictionary).duplicate(true)
+		_prepare_colors(extra)
+		result.append(extra)
+
 	return result
 
 

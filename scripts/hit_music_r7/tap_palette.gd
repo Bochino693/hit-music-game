@@ -14,14 +14,25 @@ const ARROW_STYLE_COUNT: int = 4
 const STAR_STYLE_COUNT: int = 4
 
 
+## A ORDEM AQUI E A ORDEM DOS QUADROS DA ARTE.
+##
+## res://images/tazos_idle_sheet_3x1_160.png tem tres tazos lado a lado:
+## quadro 0 = AMARELO, quadro 1 = VERMELHO, quadro 2 = AZUL. O indice
+## que chega aqui e o mesmo que vai para AnimatedSprite2D.frame (ver
+## tap_visual.configure), entao a cor devolvida precisa ser a cor
+## pintada naquele quadro.
+##
+## Estava 0=azul, 1=amarelo, 2=vermelho — deslocado em um quadro. O
+## resultado era o tazo vermelho estourando amarelo, o azul estourando
+## vermelho e o amarelo estourando azul.
 static func color_for_index(index: int) -> Color:
 	match posmod(index, 3):
 		1:
-			return TAP_YELLOW
-		2:
 			return TAP_RED
-		_:
+		2:
 			return TAP_CYAN
+		_:
+			return TAP_YELLOW
 
 
 ## Tom claro da MESMA cor: e o brilho/realce que acompanha o objeto.
