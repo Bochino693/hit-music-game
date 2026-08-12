@@ -2,11 +2,7 @@ extends "res://scripts/hit_music_r7/stage_v10.gd"
 
 const GUIDE_PRELIGHT_SEC: float = 0.95
 const GUIDE_LATE_CUTOFF_SEC: float = 0.14
-const THEME_OVERLAY_V11: Script = preload(
-	"res://scripts/hit_music_r7/theme_overlay_v11.gd"
-)
 
-var _theme_overlay_v11
 var _lane_led_cache_active: Array = []
 var _lane_led_cache_colors: Array = []
 
@@ -21,22 +17,11 @@ func _ready() -> void:
 		_lane_led_cache_active[lane] = false
 		_lane_led_cache_colors[lane] = Color.BLACK
 
-	if _theme_overlay_v10 != null:
-		_theme_overlay_v10.queue_free()
-		_theme_overlay_v10 = null
-
-	_build_theme_overlay_v11()
 	_apply_scene_led_theme()
 
 
 func _process(delta: float) -> void:
 	super._process(delta)
-
-	if _theme_overlay_v11 != null:
-		_theme_overlay_v11.set_runtime(
-			_song_time,
-			_state_name()
-		)
 
 	_update_gameplay_lane_leds(delta)
 
@@ -57,29 +42,6 @@ func _finish_song() -> void:
 
 func _exit_tree() -> void:
 	_clear_gameplay_lane_leds()
-
-
-func _build_theme_overlay_v11() -> void:
-	_theme_overlay_v11 = THEME_OVERLAY_V11.new()
-	_theme_overlay_v11.name = "ThemeOverlayV11"
-	_theme_overlay_v11.z_index = 8
-	add_child(_theme_overlay_v11)
-	_theme_overlay_v11.configure(
-		_center,
-		_radius,
-		_song
-	)
-
-
-func _on_viewport_size_changed() -> void:
-	super._on_viewport_size_changed()
-
-	if _theme_overlay_v11 != null:
-		_theme_overlay_v11.configure(
-			_center,
-			_radius,
-			_song
-		)
 
 
 func _apply_scene_led_theme() -> void:

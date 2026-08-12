@@ -1,5 +1,7 @@
 extends RefCounted
 
+const TAP_PALETTE: Script = preload("res://scripts/hit_music_r7/tap_palette.gd")
+
 static func build(song: Dictionary, difficulty_name: String, duration: float) -> Array:
 	var hard_mode: bool = difficulty_name.to_lower() == "hard"
 	var profile_value: Variant = song.get("hard" if hard_mode else "easy", {})
@@ -92,6 +94,7 @@ static func build(song: Dictionary, difficulty_name: String, duration: float) ->
 					pattern.get("path", [base_lane, (base_lane + 4) % 8])
 				)
 				if path.size() >= 2:
+					var slide_index: int = int(note_index / slide_every)
 					events.append({
 						"type": "slide",
 						"time": event_time,
@@ -103,6 +106,12 @@ static func build(song: Dictionary, difficulty_name: String, duration: float) ->
 						"shape": str(pattern.get("shape", "straight")),
 						"curve": float(pattern.get("curve", 0.55)),
 						"color_index": note_index % 3,
+						# Forma da seta e da estrela. Avancam em passos
+						# diferentes (1 e 3) para que a combinacao
+						# seta+estrela nao se repita sempre igual, e
+						# nenhuma delas fique amarrada a cor do tazo.
+						"arrow_style": TAP_PALETTE.arrow_style_for(slide_index),
+						"star_style": TAP_PALETTE.star_style_for(slide_index * 3 + 1),
 						"rhythm_slot": grid_index,
 					})
 					made_special = true

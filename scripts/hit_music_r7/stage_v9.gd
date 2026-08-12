@@ -114,11 +114,20 @@ func _prepare_chart() -> void:
 		event["_visual_progress"] = 0.0
 
 		if str(event.get("type", "")) == "slide":
-			event["_path_points"] = PATH_BUILDER.build(
+			var path_points: PackedVector2Array = PATH_BUILDER.build(
 				event,
 				_center,
 				_radius,
 				_lane_positions
+			)
+			event["_path_points"] = path_points
+			# Mesmo pre-calculo do stage base: o comprimento acumulado
+			# evita refazer a soma do trajeto inteiro a cada amostra, e os
+			# gates permitem concluir o arrasto pelos botoes fisicos.
+			event["_path_lengths"] = PATH_BUILDER.build_lengths(path_points)
+			event["_lane_gates"] = _build_lane_gates(event, path_points)
+			event["_last_pointer"] = (
+				path_points[0] if path_points.size() > 0 else _center
 			)
 
 

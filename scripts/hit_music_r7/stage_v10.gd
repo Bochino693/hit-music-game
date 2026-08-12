@@ -1,12 +1,7 @@
 extends "res://scripts/hit_music_r7/stage_v9.gd"
 
-const THEME_OVERLAY_V10: Script = preload(
-	"res://scripts/hit_music_r7/theme_overlay_v10.gd"
-)
-
 var _difficulty_cursor: int = -1
 var _display_score: float = 0.0
-var _theme_overlay_v10
 
 
 func _ready() -> void:
@@ -31,7 +26,6 @@ func _ready() -> void:
 
 	_update_pre_game_styles()
 	_set_center_hud_visible(false)
-	_build_theme_overlay_v10()
 
 	LED_CLIENT.scene_state(
 		_primary_color(),
@@ -40,16 +34,6 @@ func _ready() -> void:
 	# A/B ficam acesos persistentes nesta tela (padrao do MENU: lane 0
 	# = A/mover, lane 1 = B/selecionar) — antes so piscavam no toque.
 	LED_CLIENT.menu_state()
-
-
-func _process(delta: float) -> void:
-	super._process(delta)
-
-	if _theme_overlay_v10 != null:
-		_theme_overlay_v10.set_runtime(
-			_song_time,
-			_state_name()
-		)
 
 
 func _process_pre_game_inputs() -> void:
@@ -272,26 +256,3 @@ func _start_countdown() -> void:
 func _start_playing() -> void:
 	LED_CLIENT.ready()
 	super._start_playing()
-
-
-func _build_theme_overlay_v10() -> void:
-	_theme_overlay_v10 = THEME_OVERLAY_V10.new()
-	_theme_overlay_v10.name = "ThemeOverlayV10"
-	_theme_overlay_v10.z_index = 8
-	add_child(_theme_overlay_v10)
-	_theme_overlay_v10.configure(
-		_center,
-		_radius,
-		_song
-	)
-
-
-func _on_viewport_size_changed() -> void:
-	super._on_viewport_size_changed()
-
-	if _theme_overlay_v10 != null:
-		_theme_overlay_v10.configure(
-			_center,
-			_radius,
-			_song
-		)

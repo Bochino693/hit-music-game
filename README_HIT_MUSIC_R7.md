@@ -17,8 +17,21 @@ This refactor keeps the original cabinet flow:
 - No stationary tazo at the target.
 - The tazo entity is used only by moving TAP notes.
 - HOLD notes are thick yellow hollow capsules.
-- SLIDE notes use large cyan chevrons and a large outlined star.
+- SLIDE notes use chevrons and a star drawn in the note's own tazo color
+  (cyan/yellow/red). Four arrow silhouettes and four star silhouettes rotate
+  between slides; the color never changes family, only the shape does.
 - TAP hits use layered diamonds.
+- Every hit effect uses the color of the object that produced it — a cyan tazo
+  can never burst in yellow.
+- A note can be hit as soon as it appears; the burst is drawn where the object
+  actually is at that moment, not at the ring marker. Hitting on time still
+  scores more (see `_timing_quality` in `stage.gd`).
+- Each song has its own full-screen universe drawn by `_draw_universe`
+  (blades, ki aura, breathing waves, rune swarm, spiral seal, portal lab,
+  moon hive) plus a matching cosmic sky. There is a single background layer —
+  no overlays stacked on top of each other.
+- The record sits in its own badge in the top-right corner of the HUD panel,
+  auto-fitted so it never overlaps or truncates.
 - Song video is shown in the central horizontal rectangle.
 - Each song has its own colors, pattern, BPM, lane sequence, easy chart and hard chart.
 
@@ -33,8 +46,16 @@ Selector:
 Gameplay:
 
 - `input_a` through `input_h`: TAP and HOLD lanes.
-- Touch/mouse: TAP, HOLD and SLIDE.
+- Touch/mouse: TAP, HOLD and SLIDE (the pointer has to sweep the whole
+  corridor — jumping from start to end does not complete the note).
+- SLIDE on the cabinet: press the path lanes in order. The LED lights only the
+  next lane of the path, so the drag is playable without a touch screen.
 - Result: START replays, B returns to selector.
+
+Every song generates slides on both difficulties (`slide_every` is 6–10 in all
+profiles, and every pack ships `slides_easy`/`slides_hard`). A 90 s track
+produces roughly 9–13 slides on easy and 29–49 on hard, all crossing the
+inside of the circle between lane markers.
 
 ## Song catalog
 

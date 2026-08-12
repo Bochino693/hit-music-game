@@ -96,6 +96,7 @@ var _label_combo: Label
 var _label_performance: Label
 var _label_time: Label
 var _label_best: Label
+var _record_badge: Panel
 var _progress_bar: ProgressBar
 var _countdown_label: Label
 var _result_panel: Panel
@@ -346,37 +347,32 @@ func _build_hud() -> void:
 	_label_time.size = Vector2(title_width * 0.42, height * 0.18)
 	_top_panel.add_child(_label_time)
 
-	_label_score = _make_label("100.00%", int(height * 0.29), HORIZONTAL_ALIGNMENT_RIGHT, font)
-	_label_score.position = Vector2(right_x, height * 0.06)
-	_label_score.size = Vector2(_top_panel.size.x - right_x - inner_margin, height * 0.38)
+	# A coluna da direita comeca ABAIXO do selo de recorde (que ocupa
+	# 0.13..0.43 da altura do painel). Antes o placar comecava em 0.06 e
+	# ficava exatamente atras do recorde.
+	_label_score = _make_label("100.00%", int(height * 0.20), HORIZONTAL_ALIGNMENT_RIGHT, font)
+	_label_score.position = Vector2(right_x, height * 0.45)
+	_label_score.size = Vector2(_top_panel.size.x - right_x - inner_margin, height * 0.23)
 	_label_score.add_theme_color_override("font_color", _secondary_color())
 	_top_panel.add_child(_label_score)
 
-	_label_combo = _make_label("COMBO 0", int(height * 0.14), HORIZONTAL_ALIGNMENT_RIGHT, font)
-	_label_combo.position = Vector2(right_x, height * 0.46)
-	_label_combo.size = Vector2(_top_panel.size.x - right_x - inner_margin, height * 0.18)
+	_label_combo = _make_label("COMBO 0", int(height * 0.12), HORIZONTAL_ALIGNMENT_RIGHT, font)
+	_label_combo.position = Vector2(right_x, height * 0.68)
+	_label_combo.size = Vector2(_top_panel.size.x - right_x - inner_margin, height * 0.11)
 	_top_panel.add_child(_label_combo)
 
-	_label_performance = _make_label("LIFE 100%", int(height * 0.13), HORIZONTAL_ALIGNMENT_RIGHT, font)
-	_label_performance.position = Vector2(right_x, height * 0.67)
-	_label_performance.size = Vector2(_top_panel.size.x - right_x - inner_margin, height * 0.18)
+	_label_performance = _make_label("LIFE 100%", int(height * 0.11), HORIZONTAL_ALIGNMENT_RIGHT, font)
+	_label_performance.position = Vector2(right_x, height * 0.79)
+	_label_performance.size = Vector2(_top_panel.size.x - right_x - inner_margin, height * 0.10)
 	_label_performance.add_theme_color_override("font_color", _primary_color())
 	_top_panel.add_child(_label_performance)
 
-	# O lado direito fica livre na versao final do HUD. BEST permanece
-	# visivel em apresentacao, gameplay e resultado, sem disputar espaco
-	# com o titulo da musica.
-	_label_best = _make_label(
-		"BEST  %.2f%%" % _best_score,
-		int(height * 0.20),
-		HORIZONTAL_ALIGNMENT_RIGHT,
-		font
-	)
-	_label_best.position = Vector2(right_x, height * 0.35)
-	_label_best.size = Vector2(_top_panel.size.x - right_x - inner_margin, height * 0.30)
-	_label_best.clip_text = true
-	_label_best.add_theme_color_override("font_color", _accent_color())
-	_top_panel.add_child(_label_best)
+	# RECORDE: selo proprio no canto superior direito do painel. Antes era
+	# um rotulo solto que ocupava a mesma faixa vertical do placar e do
+	# combo (0.35..0.65 contra 0.06..0.44 e 0.46..0.64) e ia colado na
+	# borda arredondada, entao aparecia sobreposto ou cortado. Agora tem
+	# moldura, respiro proprio e largura calculada a partir do texto.
+	_build_record_badge(font, height, inner_margin)
 
 	_progress_bar = ProgressBar.new()
 	_progress_bar.min_value = 0.0
@@ -428,6 +424,122 @@ func _build_hud() -> void:
 	_result_details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_result_details.clip_text = true
 	_result_panel.add_child(_result_details)
+
+
+## Selo do recorde. Fica encostado no canto superior direito do painel,
+## com margem propria para nao tocar a borda arredondada, altura menor
+## que a faixa do titulo e base acima da barra de progresso. A largura
+## nasce da medida real do texto (limitada ao espaco livre a direita do
+## titulo), entao o valor nunca sai cortado.
+func _build_record_badge(
+	font: Font,
+	height: float,
+	inner_margin: float
+) -> void:
+	var text_value: String = _record_text()
+	var font_size: int = maxi(12, int(height * 0.185))
+	var badge_height: float = height * 0.30
+	var padding: float = height * 0.10
+
+	var available_width: float = _top_panel.size.x * 0.36 - inner_margin
+	var measured: float = font.get_string_size(
+		text_value,
+		HORIZONTAL_ALIGNMENT_LEFT,
+		-1.0,
+		font_size
+	).x
+	var badge_width: float = clampf(
+		measured + padding * 2.0,
+		_top_panel.size.x * 0.16,
+		maxf(available_width, _top_panel.size.x * 0.16)
+	)
+
+	_record_badge = Panel.new()
+	_record_badge.position = Vector2(
+		_top_panel.size.x - inner_margin - badge_width,
+		height * 0.13
+	)
+	_record_badge.size = Vector2(badge_width, badge_height)
+	_record_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_record_badge.add_theme_stylebox_override("panel", _record_badge_style())
+	_top_panel.add_child(_record_badge)
+
+	_label_best = _make_label(
+		text_value,
+		font_size,
+		HORIZONTAL_ALIGNMENT_CENTER,
+		font
+	)
+	_label_best.position = Vector2(padding * 0.5, 0.0)
+	_label_best.size = Vector2(badge_width - padding, badge_height)
+	_label_best.clip_text = true
+	_label_best.add_theme_color_override("font_color", _accent_color())
+	_record_badge.add_child(_label_best)
+	_fit_record_badge()
+
+
+func _record_text() -> String:
+	return "RECORDE  %.2f%%" % _best_score
+
+
+## Reduz a fonte ate o texto caber na largura util do selo. Assim um
+## recorde de 100.00% continua inteiro, sem reticencias.
+func _fit_record_badge() -> void:
+	if _label_best == null or not is_instance_valid(_label_best):
+		return
+	_label_best.text = _record_text()
+	_fit_label_to_width(
+		_label_best,
+		_label_best.size.x,
+		maxi(12, int(get_viewport_rect().size.y * TOP_HEIGHT_RATIO * 0.185)),
+		12
+	)
+
+
+## Ao redimensionar a janela o painel superior muda de largura: o selo
+## volta a se ancorar no canto e o texto e remedido, para nunca invadir
+## o titulo nem estourar a borda.
+func _reposition_record_badge() -> void:
+	if _record_badge == null or not is_instance_valid(_record_badge):
+		return
+	if _top_panel == null or not is_instance_valid(_top_panel):
+		return
+
+	var screen: Vector2 = get_viewport_rect().size
+	var margin: float = screen.x * TOP_MARGIN_RATIO
+	var height: float = screen.y * TOP_HEIGHT_RATIO
+	_top_panel.position = Vector2(margin, margin)
+	_top_panel.size = Vector2(screen.x - margin * 2.0, height)
+
+	var inner_margin: float = _top_panel.size.x * 0.025
+	var badge_width: float = clampf(
+		_record_badge.size.x,
+		_top_panel.size.x * 0.16,
+		maxf(_top_panel.size.x * 0.36 - inner_margin, _top_panel.size.x * 0.16)
+	)
+	_record_badge.size = Vector2(badge_width, height * 0.30)
+	_record_badge.position = Vector2(
+		_top_panel.size.x - inner_margin - badge_width,
+		height * 0.13
+	)
+
+	if _label_best != null and is_instance_valid(_label_best):
+		var padding: float = height * 0.10
+		_label_best.position = Vector2(padding * 0.5, 0.0)
+		_label_best.size = Vector2(badge_width - padding, _record_badge.size.y)
+		_fit_record_badge()
+
+
+func _record_badge_style() -> StyleBoxFlat:
+	var accent: Color = _accent_color()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.010, 0.016, 0.034, 0.62)
+	style.border_color = Color(accent.r, accent.g, accent.b, 0.58)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(14)
+	style.shadow_color = Color(accent.r, accent.g, accent.b, 0.16)
+	style.shadow_size = 8
+	return style
 
 
 func _load_assets() -> void:
@@ -486,6 +598,7 @@ func _prepare_chart() -> void:
 			)
 			event["_path_points"] = path_points
 			event["_path_lengths"] = PATH_BUILDER.build_lengths(path_points)
+			event["_lane_gates"] = _build_lane_gates(event, path_points)
 			event["_last_pointer"] = (
 				path_points[0] if path_points.size() > 0 else _center
 			)
@@ -630,8 +743,11 @@ func _spawn_due_events() -> void:
 		if type_name == "tap":
 			_spawn_tap_visual(event, approach)
 		elif type_name == "hold":
+			# O LED acende na cor da propria fita do hold (amarelo), nao
+			# na cor de destaque do cenario: o botao fisico precisa dizer
+			# a mesma coisa que a tela esta mostrando.
 			var lane: int = int(event.get("lane", 0))
-			LED_CLIENT.set_lane(lane, _accent_color())
+			LED_CLIENT.set_lane(lane, _event_color(event))
 		elif type_name == "slide":
 			pass
 
@@ -815,8 +931,9 @@ func _handle_pointer_move(source: String, position_value: Vector2) -> void:
 
 		var progress: float = float(event.get("_visual_progress", 0.0))
 		if progress >= 0.965:
-			var end_position: Vector2 = PATH_BUILDER.point_at(points, 1.0)
-			_renderer.add_effect("slide", end_position, _primary_color())
+			# _resolve_hit ja publica o estouro na cor do proprio arrasto.
+			# Antes havia um segundo efeito aqui, na cor de tema da musica,
+			# que pintava por cima do primeiro com a cor errada.
 			_resolve_hit(event, "slide", 1.0)
 
 
@@ -889,11 +1006,144 @@ func _handle_lane_press(
 	has_pointer: bool = false,
 	press_position: Vector2 = Vector2.ZERO
 ) -> void:
-	if _try_tap(lane):
+	if _advance_slide_with_lane(lane):
 		return
-	if _try_hold(lane, source):
+
+	# Com a janela aberta desde o nascimento do tazo, varios objetos da
+	# mesma lane podem estar na tela ao mesmo tempo. Vence o mais proximo
+	# do proprio tempo, e nao o tipo que aparecer primeiro na lista: antes
+	# a ordem era fixa (tap, depois hold, depois arrasto) e um tap ainda
+	# distante roubava o toque que era do arrasto que ja estava chegando.
+	var best: Dictionary = {}
+	var best_difference: float = INF
+
+	for event_value in _events:
+		if not event_value is Dictionary:
+			continue
+		var event: Dictionary = event_value as Dictionary
+		if bool(event.get("_resolved", false)):
+			continue
+		if not _is_selectable(event):
+			continue
+
+		match str(event.get("type", "")):
+			"tap", "hold":
+				if int(event.get("lane", -1)) != lane:
+					continue
+			"slide":
+				if bool(event.get("_active", false)):
+					continue
+				var path_value: Variant = event.get("path", [])
+				if not path_value is Array or (path_value as Array).is_empty():
+					continue
+				if int((path_value as Array)[0]) != lane:
+					continue
+			_:
+				continue
+
+		var difference: float = absf(_song_time - float(event.get("time", 0.0)))
+		if difference < best_difference:
+			best = event
+			best_difference = difference
+
+	if best.is_empty():
 		return
-	_try_slide(lane, source, has_pointer, press_position)
+
+	match str(best.get("type", "tap")):
+		"hold":
+			best["_holding"] = true
+			best["_source"] = source
+		"slide":
+			_begin_slide(best, source, has_pointer, press_position)
+		_:
+			_resolve_hit(best, "tap", _timing_quality(best_difference))
+
+
+## Arrasto no gabinete: sem tela sensivel ao toque nao existe ponteiro
+## para varrer o corredor, entao o percurso avanca apertando os botoes
+## das lanes do caminho, em ordem. Isso so vale para arrastos iniciados
+## por botao fisico — no toque/mouse continua valendo a varredura
+## completa de _advance_slide_progress, sem atalho.
+func _advance_slide_with_lane(lane: int) -> bool:
+	for event_value in _events:
+		if not event_value is Dictionary:
+			continue
+		var event: Dictionary = event_value as Dictionary
+		if bool(event.get("_resolved", false)):
+			continue
+		if str(event.get("type", "")) != "slide":
+			continue
+		if not bool(event.get("_active", false)):
+			continue
+		if not str(event.get("_source", "")).begins_with("lane_"):
+			continue
+
+		var gate: Dictionary = _next_slide_gate(event)
+		if gate.is_empty():
+			continue
+		if int(gate.get("lane", -1)) != lane:
+			continue
+
+		var gate_progress: float = float(gate.get("progress", 0.0))
+		event["_visual_progress"] = gate_progress
+		event["_last_pointer"] = _lane_positions[
+			clampi(lane, 0, _lane_positions.size() - 1)
+		]
+
+		if gate_progress >= 0.965:
+			_resolve_hit(event, "slide", 1.0)
+		return true
+
+	return false
+
+
+## Proximo ponto do caminho que ainda falta ser tocado. Voltar ou pular
+## etapas nao conta: so o gate imediatamente a frente e aceito.
+func _next_slide_gate(event: Dictionary) -> Dictionary:
+	var gates_value: Variant = event.get("_lane_gates", [])
+	if not gates_value is Array:
+		return {}
+
+	var progress: float = float(event.get("_visual_progress", 0.0))
+	for gate_value in (gates_value as Array):
+		if not gate_value is Dictionary:
+			continue
+		var gate: Dictionary = gate_value as Dictionary
+		if float(gate.get("progress", 0.0)) > progress + 0.02:
+			return gate
+	return {}
+
+
+## Progresso de cada lane do caminho dentro da polilinha ja amostrada.
+## Serve tanto para o avanco por botao quanto para o LED indicar qual
+## e o proximo botao do arrasto.
+func _build_lane_gates(
+	event: Dictionary,
+	points: PackedVector2Array
+) -> Array:
+	var gates: Array = []
+	var lanes_value: Variant = event.get("path", [])
+	if not lanes_value is Array or points.size() < 2:
+		return gates
+
+	var last_index: int = points.size() - 1
+	for lane_value in (lanes_value as Array):
+		var lane_index: int = clampi(int(lane_value), 0, _lane_positions.size() - 1)
+		var target: Vector2 = _lane_positions[lane_index]
+		var best_progress: float = 0.0
+		var best_distance: float = INF
+		for index in range(points.size()):
+			var distance_value: float = points[index].distance_to(target)
+			if distance_value < best_distance:
+				best_distance = distance_value
+				best_progress = float(index) / float(last_index)
+		gates.append({"lane": lane_index, "progress": best_progress})
+
+	# O ultimo ponto do caminho fecha a nota, mesmo que a amostragem tenha
+	# parado alguns pixels antes da marca da lane.
+	if not gates.is_empty():
+		(gates[gates.size() - 1] as Dictionary)["progress"] = 1.0
+	return gates
 
 
 func _handle_lane_release(_lane: int, source: String) -> void:
@@ -914,114 +1164,50 @@ func _handle_lane_release(_lane: int, source: String) -> void:
 			_resolve_miss(event)
 
 
-func _try_tap(lane: int) -> bool:
+## Assim que o objeto aparece na tela ele ja pode ser escolhido: nao e
+## mais preciso esperar ele encostar no anel. Antecipar deixou de ser
+## erro (o estouro sai onde o tazo estiver); atrasar continua limitado
+## pelo hit_window da dificuldade, senao a nota some sem chance.
+func _is_selectable(event: Dictionary) -> bool:
+	if not bool(event.get("_spawned", false)):
+		return false
 	var hit_window: float = float(_difficulty.get("hit_window", 0.20))
+	return _song_time <= float(event.get("time", 0.0)) + hit_window
+
+
+## Pontuacao por precisao. Encaixar no anel continua valendo mais, entao
+## o jogador que espera o tempo certo e recompensado mesmo podendo
+## acertar antes.
+func _timing_quality(difference: float) -> float:
 	var perfect_window: float = float(_difficulty.get("perfect_window", 0.075))
-	var best: Dictionary = {}
-	var best_difference: float = INF
-
-	for event_value in _events:
-		if not event_value is Dictionary:
-			continue
-		var event: Dictionary = event_value as Dictionary
-		if bool(event.get("_resolved", false)):
-			continue
-		if str(event.get("type", "")) != "tap":
-			continue
-		if int(event.get("lane", -1)) != lane:
-			continue
-
-		var difference: float = absf(_song_time - float(event.get("time", 0.0)))
-		if difference <= hit_window and difference < best_difference:
-			best = event
-			best_difference = difference
-
-	if best.is_empty():
-		return false
-
-	var quality: float = 1.0 if best_difference <= perfect_window else 0.72
-	_resolve_hit(best, "tap", quality)
-	return true
-
-
-func _try_hold(lane: int, source: String) -> bool:
 	var hit_window: float = float(_difficulty.get("hit_window", 0.20))
-	var best: Dictionary = {}
-	var best_difference: float = INF
-
-	for event_value in _events:
-		if not event_value is Dictionary:
-			continue
-		var event: Dictionary = event_value as Dictionary
-		if bool(event.get("_resolved", false)):
-			continue
-		if str(event.get("type", "")) != "hold":
-			continue
-		if int(event.get("lane", -1)) != lane:
-			continue
-
-		var difference: float = absf(_song_time - float(event.get("time", 0.0)))
-		if difference <= hit_window and difference < best_difference:
-			best = event
-			best_difference = difference
-
-	if best.is_empty():
-		return false
-
-	best["_holding"] = true
-	best["_source"] = source
-	return true
+	if difference <= perfect_window:
+		return 1.0
+	if difference <= hit_window:
+		return 0.72
+	var approach: float = maxf(float(_difficulty.get("approach", 1.0)), 0.001)
+	var early: float = clampf((difference - hit_window) / approach, 0.0, 1.0)
+	return lerpf(0.72, 0.50, early)
 
 
-func _try_slide(
-	lane: int,
+## Comeca um arrasto. O corredor e ancorado na posicao real do toque
+## quando existe ponteiro (touch/mouse); no botao fisico usa o proprio
+## inicio do trajeto, ja que nao ha ponteiro na tela.
+func _begin_slide(
+	event: Dictionary,
 	source: String,
 	has_pointer: bool = false,
 	press_position: Vector2 = Vector2.ZERO
-) -> bool:
-	var hit_window: float = float(_difficulty.get("hit_window", 0.20))
-	var best: Dictionary = {}
-	var best_difference: float = INF
+) -> void:
+	event["_active"] = true
+	event["_source"] = source
+	event["_visual_progress"] = 0.0
 
-	for event_value in _events:
-		if not event_value is Dictionary:
-			continue
-		var event: Dictionary = event_value as Dictionary
-		if bool(event.get("_resolved", false)):
-			continue
-		if str(event.get("type", "")) != "slide":
-			continue
-		if bool(event.get("_active", false)):
-			continue
-
-		var path_value: Variant = event.get("path", [])
-		if not path_value is Array or (path_value as Array).is_empty():
-			continue
-		if int((path_value as Array)[0]) != lane:
-			continue
-
-		var difference: float = absf(_song_time - float(event.get("time", 0.0)))
-		if difference <= hit_window and difference < best_difference:
-			best = event
-			best_difference = difference
-
-	if best.is_empty():
-		return false
-
-	best["_active"] = true
-	best["_source"] = source
-	best["_visual_progress"] = 0.0
-
-	# Ancora o inicio do corredor na posicao real do toque/clique
-	# quando existir (touch/mouse); em input fisico (botao) usa o
-	# proprio inicio do trajeto, ja que nao ha ponteiro na tela.
 	var start_point: Vector2 = _center
-	var points_value: Variant = best.get("_path_points", PackedVector2Array())
+	var points_value: Variant = event.get("_path_points", PackedVector2Array())
 	if points_value is PackedVector2Array and (points_value as PackedVector2Array).size() > 0:
 		start_point = (points_value as PackedVector2Array)[0]
-	best["_last_pointer"] = press_position if has_pointer else start_point
-
-	return true
+	event["_last_pointer"] = press_position if has_pointer else start_point
 
 
 func _resolve_hit(event: Dictionary, kind: String, quality: float) -> void:
@@ -1031,7 +1217,6 @@ func _resolve_hit(event: Dictionary, kind: String, quality: float) -> void:
 	event["_active"] = false
 	event["_holding"] = false
 
-	var position_value: Vector2 = _event_end_position(event)
 	var effect_kind: String = "tap"
 	if kind == "slide":
 		effect_kind = "slide"
@@ -1040,9 +1225,18 @@ func _resolve_hit(event: Dictionary, kind: String, quality: float) -> void:
 	# Uma unica cor governa todo o feedback deste acerto: burst, roda,
 	# mandala e LED. Assim um tazo vermelho nunca gera efeito de outra cor.
 	var hit_color: Color = _event_color(event)
-	_renderer.add_effect(effect_kind, position_value, hit_color)
+	# O estouro nasce ONDE O OBJETO ESTA no momento do acerto (no meio do
+	# trajeto, se foi acertado cedo). O flash da roda continua ancorado no
+	# ponto de encaixe da lane, que e onde a linha fica.
+	_renderer.add_effect(
+		effect_kind,
+		_event_hit_position(event),
+		hit_color,
+		int(event.get("arrow_style", 0)),
+		int(event.get("star_style", 0))
+	)
 	_renderer.flash_ring_at(
-		position_value,
+		_event_end_position(event),
 		hit_color,
 		0.95 + quality * 0.35,
 		3.1
@@ -1105,14 +1299,56 @@ func _event_end_position(event: Dictionary) -> Vector2:
 	return _lane_positions[lane]
 
 
+## Onde o objeto esta AGORA na tela. Como o acerto nao espera mais o
+## tazo chegar no anel, o efeito precisa nascer no ponto real em que ele
+## foi acertado — no meio do caminho, se foi cedo — e nao no alvo fixo.
+## As formulas seguem as mesmas do desenho (tap_visual.update_visual,
+## playfield_renderer._draw_hold e _draw_slide) para o estouro cair
+## exatamente em cima do desenho.
+func _event_hit_position(event: Dictionary) -> Vector2:
+	var type_name: String = str(event.get("type", "tap"))
+	var approach: float = maxf(float(_difficulty.get("approach", 1.0)), 0.001)
+	var hit_time: float = float(event.get("time", 0.0))
+	var arrival: float = clampf((_song_time - (hit_time - approach)) / approach, 0.0, 1.0)
+	var eased: float = 1.0 - pow(1.0 - arrival, 4.0)
+
+	if type_name == "slide":
+		var points_value: Variant = event.get("_path_points", PackedVector2Array())
+		if not points_value is PackedVector2Array:
+			return _event_end_position(event)
+		var points: PackedVector2Array = points_value as PackedVector2Array
+		if points.is_empty():
+			return _event_end_position(event)
+		if _song_time < hit_time:
+			return _center.lerp(points[0], eased)
+		var lengths_value: Variant = event.get("_path_lengths", {})
+		var lengths: Dictionary = lengths_value if lengths_value is Dictionary else {}
+		return PATH_BUILDER.point_at_cached(
+			points,
+			lengths,
+			clampf(float(event.get("_visual_progress", 0.0)), 0.0, 1.0)
+		)
+
+	if type_name == "tap":
+		var node_value: Variant = event.get("_node", null)
+		if node_value is Node2D and is_instance_valid(node_value):
+			return (node_value as Node2D).position
+
+	var target: Vector2 = _event_end_position(event)
+	if _song_time >= hit_time:
+		return target
+	return _center.lerp(target, eased)
+
+
 func _event_color(event: Dictionary) -> Color:
 	var type_name: String = str(event.get("type", "tap"))
 	if type_name == "hold":
 		# Hold e sempre amarelo — mesma cor da fita/capsula desenhada
 		# (_draw_capsule) e do LED fisico (HOLD_COLOR em stage_final.gd).
 		return HOLD_VISUAL_COLOR
-	if type_name == "slide":
-		return _primary_color()
+	# Arrasto tambem segue a cor do proprio objeto. Antes ele usava a cor
+	# de tema da musica, entao uma estrela ciano podia estourar num efeito
+	# amarelo/vermelho que nao tinha nada a ver com o que estava na tela.
 	return _tap_color(int(event.get("color_index", 0)))
 
 
@@ -1145,8 +1381,7 @@ func _finish_game(failed: bool) -> void:
 	)
 	_save_record(score)
 	_best_score = maxf(_best_score, score)
-	if _label_best != null and is_instance_valid(_label_best):
-		_label_best.text = "BEST  %.2f%%" % _best_score
+	_fit_record_badge()
 	LED_CLIENT.clear_all()
 
 	_play_game_over_sting()
@@ -1346,6 +1581,7 @@ func _on_viewport_size_changed() -> void:
 	if _countdown_label != null and _top_panel != null:
 		_countdown_label.position = _top_panel.position
 		_countdown_label.size = _top_panel.size
+	_reposition_record_badge()
 	if _cover != null:
 		_cover.position = _center - Vector2(_radius * 0.72, _radius * 0.58)
 		_cover.size = Vector2(_radius * 1.44, _radius * 1.16)

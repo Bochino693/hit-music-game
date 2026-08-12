@@ -26,11 +26,6 @@ func _ready() -> void:
 	# mais fluido e responsivo, sem o teto de 60 escondido.
 	Engine.max_fps = 160
 
-	# Remove overlay antigo como já fazia a versão final.
-	if _theme_overlay_v11 != null:
-		_theme_overlay_v11.queue_free()
-		_theme_overlay_v11 = null
-
 	var client := _led_client_r21()
 	if client != null:
 		if client.has_method("begin_stage"):
@@ -113,8 +108,42 @@ func _publish_game_frame_r21() -> void:
 
 		var type_name := str(event.get("type", "tap")).to_lower()
 
-		# Slide/arraste nunca acende LED físico.
+		# Arrasto guia os botões: no gabinete não existe ponteiro, então o
+		# percurso é feito apertando as lanes do caminho em ordem. Antes de
+		# começar acende a lane de partida; em curso, acende SÓ o próximo
+		# ponto — é o que diz ao jogador para onde arrastar.
 		if type_name == "slide" or type_name == "drag" or type_name == "swipe":
+			var slide_lane := -1
+			var slide_active := bool(event.get("_active", false))
+
+			if slide_active:
+				var gate := _next_slide_gate(event)
+				if not gate.is_empty():
+					slide_lane = int(gate.get("lane", -1))
+			else:
+				var path_value: Variant = event.get("path", [])
+				if path_value is Array and not (path_value as Array).is_empty():
+					slide_lane = int((path_value as Array)[0])
+
+			if slide_lane < 0 or slide_lane > 7:
+				continue
+			if hold_active[slide_lane]:
+				continue
+
+			var slide_start := _event_start_time(event)
+			var slide_distance := 0.0
+			if slide_active:
+				if _song_time > _event_end_time(event, slide_start) + LED_LATE_SECONDS:
+					continue
+			else:
+				var slide_dt := slide_start - _song_time
+				if _dt_out_of_led_range(slide_dt):
+					continue
+				slide_distance = absf(slide_dt)
+
+			if slide_distance < best_distance[slide_lane]:
+				best_distance[slide_lane] = slide_distance
+				colors[slide_lane] = _event_color(event)
 			continue
 
 		if type_name != "tap" and type_name != "hold":
@@ -158,6 +187,10 @@ func _publish_game_frame_r21() -> void:
 	var client := _led_client_r21()
 	if client != null and client.has_method("send_state"):
 		client.call("send_state", frame)
+
+
+func _dt_out_of_led_range(dt: float) -> bool:
+	return dt > LED_PRELIGHT_SECONDS or dt < -LED_LATE_SECONDS
 
 
 func _multi_command_r21(colors: Array[Color]) -> String:

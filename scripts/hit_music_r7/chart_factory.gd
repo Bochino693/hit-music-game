@@ -1,5 +1,7 @@
 extends RefCounted
 
+const TAP_PALETTE: Script = preload("res://scripts/hit_music_r7/tap_palette.gd")
+
 static func build(song: Dictionary, difficulty_name: String, duration: float) -> Array:
 	var profile_value: Variant = song.get(
 		"hard" if difficulty_name.to_lower() == "hard" else "easy",
@@ -71,6 +73,7 @@ static func build(song: Dictionary, difficulty_name: String, duration: float) ->
 				var pattern: Dictionary = (pattern_value as Dictionary).duplicate(true)
 				var path: Array = _array_value(pattern.get("path", [base_lane, (base_lane + 4) % 8]))
 				if path.size() >= 2:
+					var slide_index: int = int(index / slide_every)
 					events.append({
 						"type": "slide",
 						"time": event_time,
@@ -79,6 +82,8 @@ static func build(song: Dictionary, difficulty_name: String, duration: float) ->
 						"shape": str(pattern.get("shape", "straight")),
 						"curve": float(pattern.get("curve", 0.55)),
 						"color_index": index % 3,
+						"arrow_style": TAP_PALETTE.arrow_style_for(slide_index),
+						"star_style": TAP_PALETTE.star_style_for(slide_index * 3 + 1),
 					})
 					made_special = true
 

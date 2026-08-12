@@ -34,14 +34,19 @@ const COSMIC_STYLES: Array[String] = [
 	"wormhole",
 	"solar_crown",
 ]
+## O ceu de cada musica REFORCA o universo dela em vez de brigar com
+## ele: riscos para as laminas do carmine, coroa para a aura do dragon
+## ball, bandas para as ondas do demon, orbitas para a lua do soul, e
+## assim por diante. Antes carmine usava supernova (raios saindo do
+## centro), que puxava a leitura de volta para o desenho concentrico.
 const COSMIC_STYLE_BY_SONG: Dictionary = {
-	"carmine": "supernova",
+	"carmine": "meteor",
 	"dragon_ball": "solar_crown",
 	"demon": "aurora",
 	"fairy": "constellation",
 	"naruto": "spiral_galaxy",
 	"rick_morty": "wormhole",
-	"soul": "meteor",
+	"soul": "planetary",
 }
 var _cosmic_stars: Array[Vector4] = []
 
@@ -119,7 +124,13 @@ func set_runtime(
 	queue_redraw()
 
 
-func add_effect(kind: String, position_value: Vector2, color: Color) -> void:
+func add_effect(
+	kind: String,
+	position_value: Vector2,
+	color: Color,
+	arrow_style: int = 0,
+	star_style: int = 0
+) -> void:
 	# O erro continua afetando combo e performance, mas nao cobre a proxima nota.
 	if kind == "miss":
 		return
@@ -136,6 +147,10 @@ func add_effect(kind: String, position_value: Vector2, color: Color) -> void:
 		"start": float(Time.get_ticks_msec()) / 1000.0,
 		"duration": duration,
 		"rotation": fmod(position_value.x * 0.017 + position_value.y * 0.013, TAU),
+		# O estouro reaproveita a mesma seta/estrela que a nota mostrava,
+		# entao o efeito continua sendo "aquele objeto explodindo".
+		"arrow_style": arrow_style,
+		"star_style": star_style,
 	})
 	queue_redraw()
 
@@ -225,11 +240,14 @@ func _draw() -> void:
 	if radius <= 0.0:
 		return
 
+	# Uma unica camada desenha o cenario. Antes eram tres empilhadas (a
+	# mandala geral, os aneis tecnicos e o overlay tematico), todas com o
+	# mesmo desenho concentrico — por isso toda tela parecia a do carmine
+	# com coisas por cima.
 	_draw_circle_base()
 	_draw_cosmic_sky()
-	_draw_theme_geometry()
+	_draw_universe()
 	_draw_ambient_particles()
-	_draw_inner_technical_rings()
 	_draw_ring()
 	_draw_ring_pulses()
 	_draw_lane_energy()
@@ -446,266 +464,708 @@ func _draw_cosmic_sky() -> void:
 		if twinkle > 0.82 and star.z > 0.45:
 			draw_line(position_value - Vector2(star_size * 2.2, 0.0), position_value + Vector2(star_size * 2.2, 0.0), Color(1.0, 1.0, 1.0, 0.18), maxf(1.0, star_size * 0.28), true)
 			draw_line(position_value - Vector2(0.0, star_size * 2.2), position_value + Vector2(0.0, star_size * 2.2), Color(1.0, 1.0, 1.0, 0.18), maxf(1.0, star_size * 0.28), true)
-func _draw_theme_geometry() -> void:
-	var configured_pattern: String = str(
-		song.get("pattern", "diamonds")
-	).to_lower()
-	var intensity: float = clampf(
+
+
+## Cada musica tem o SEU universo. Antes todas as telas desenhavam a
+## mesma mandala concentrica (a do carmine) e as diferencas eram apenas
+## a forma miuda de cada cristal — por cima ainda vinha um overlay que
+## repetia a mesma mandala. Agora cada cenario tem uma ESTRUTURA
+## propria: lamina, aura, onda, enxame, espiral, grade e favo nao se
+## parecem nem de longe, e nenhuma camada e empilhada sobre a outra.
+const UNIVERSE_STYLES: Array[String] = [
+	"blade_shards",
+	"ki_aura",
+	"breath_waves",
+	"rune_swarm",
+	"spiral_seal",
+	"portal_lab",
+	"moon_hive",
+	"prism_field",
+]
+const UNIVERSE_BY_SONG: Dictionary = {
+	"carmine": "blade_shards",
+	"dragon_ball": "ki_aura",
+	"demon": "breath_waves",
+	"fairy": "rune_swarm",
+	"naruto": "spiral_seal",
+	"rick_morty": "portal_lab",
+	"soul": "moon_hive",
+}
+## Nenhum desenho de cenario passa deste raio: tudo fica dentro do
+## disco, sem vazar para o fundo preto nem encostar na linha do anel.
+const UNIVERSE_INNER_RATIO: float = 0.86
+
+
+func _universe_style() -> String:
+	var explicit_style: String = str(song.get("universe_style", ""))
+	if explicit_style in UNIVERSE_STYLES:
+		return explicit_style
+	var song_id: String = str(song.get("id", ""))
+	if UNIVERSE_BY_SONG.has(song_id):
+		return str(UNIVERSE_BY_SONG[song_id])
+	# Musica nova sem universo definido nao herda o do carmine: cai num
+	# campo neutro proprio, escolhido pela semente.
+	var seed_value: int = absi(int(song.get("seed", 0)))
+	return UNIVERSE_STYLES[seed_value % UNIVERSE_STYLES.size()]
+
+
+func _universe_radius() -> float:
+	return radius * UNIVERSE_INNER_RATIO
+
+
+## Meia-corda do disco na distancia informada do centro. Usada pelos
+## cenarios de linha reta (lamina, onda, grade) para terminarem
+## exatamente na borda do circulo, sem corte quadrado.
+func _chord_half(distance_value: float) -> float:
+	var limit: float = _universe_radius()
+	return sqrt(maxf(limit * limit - distance_value * distance_value, 0.0))
+
+
+func _draw_universe() -> void:
+	# background_intensity da dificuldade vem baixo (0.13 no facil, 0.22
+	# no dificil) porque servia a uma mandala de linhas finas repetida em
+	# quatro camadas. Cada universo agora tem uma estrutura unica e
+	# precisa de corpo para ser reconhecido, entao esse valor e reescalado
+	# aqui — continua respondendo a dificuldade, mas com presenca real.
+	var base_intensity: float = clampf(
 		float(difficulty.get("background_intensity", 0.18)),
 		0.06,
 		0.30
 	)
+	var intensity: float = clampf(base_intensity * 1.90 + 0.06, 0.14, 0.52)
 	var time_value: float = _idle_time()
-	var speed: float = float(
-		difficulty.get("background_speed", 0.22)
-	)
+	var speed: float = float(difficulty.get("background_speed", 0.22))
 	var rotation: float = time_value * speed
 	var beat: float = _beat_pulse()
 	var reaction: float = _hit_energy + _combo_energy * 0.32
-	var primary: Color = _primary()
-	var secondary: Color = _secondary()
-	var accent: Color = _accent()
-	# Esta e a mandala principal de cristais. Enquanto o burst esta vivo,
-	# todas as camadas usam a cor exata do tazo; somente no final ocorre
-	# uma volta curta e suave para a paleta do cenario.
-	var hit_color_mix: float = clampf(_hit_color_energy * 4.0, 0.0, 1.0)
-	primary = primary.lerp(_hit_color, hit_color_mix)
-	secondary = secondary.lerp(_hit_color, hit_color_mix)
-	accent = accent.lerp(_hit_color, hit_color_mix)
 
-	# Fundo totalmente geometrico: sem arcos cortados.
-	# Cada camada forma uma mandala completa de cristais.
-	for layer in range(1, 5):
-		var layer_radius: float = radius * (
-			0.10 + float(layer) * 0.115
+	# Enquanto o burst do acerto esta vivo, o cenario inteiro assume a
+	# cor do tazo acertado e volta suavemente para a paleta da musica.
+	var hit_mix: float = clampf(_hit_color_energy * 4.0, 0.0, 1.0)
+	var primary: Color = _primary().lerp(_hit_color, hit_mix)
+	var secondary: Color = _secondary().lerp(_hit_color, hit_mix)
+	var accent: Color = _accent().lerp(_hit_color, hit_mix)
+
+	match _universe_style():
+		"ki_aura":
+			_draw_universe_ki_aura(time_value, intensity, beat, reaction, primary, accent)
+		"breath_waves":
+			_draw_universe_breath_waves(time_value, intensity, beat, reaction, primary, secondary, accent)
+		"rune_swarm":
+			_draw_universe_rune_swarm(time_value, intensity, beat, reaction, primary, secondary, accent)
+		"spiral_seal":
+			_draw_universe_spiral_seal(time_value, rotation, intensity, beat, reaction, primary, accent)
+		"portal_lab":
+			_draw_universe_portal_lab(time_value, rotation, intensity, beat, reaction, primary, secondary, accent)
+		"moon_hive":
+			_draw_universe_moon_hive(time_value, rotation, intensity, beat, reaction, primary, secondary, accent)
+		"prism_field":
+			_draw_universe_prism_field(time_value, rotation, intensity, beat, reaction, primary, secondary, accent)
+		_:
+			_draw_universe_blade_shards(time_value, intensity, beat, reaction, primary, accent)
+
+	_draw_hit_bloom()
+
+
+## Clarao central na cor do tazo acertado. E a unica camada comum a
+## todos os universos, porque nao e decoracao: e a resposta do acerto.
+func _draw_hit_bloom() -> void:
+	if _hit_color_energy <= 0.015:
+		return
+	_draw_soft_glow(
+		center,
+		radius * (0.26 + _hit_color_energy * 0.20),
+		_hit_color,
+		_hit_color_energy * 0.26,
+		3
+	)
+
+
+## CARMINE — laminas. Cortes diagonais atravessam o disco e deixam
+## estilhacos para tras. Sem nenhum anel concentrico: a leitura e de
+## golpe, nao de mandala.
+func _draw_universe_blade_shards(
+	time_value: float,
+	intensity: float,
+	beat: float,
+	reaction: float,
+	primary: Color,
+	accent: Color
+) -> void:
+	for slash in range(5):
+		var angle: float = -PI * 0.30 + float(slash) * 0.38
+		angle += sin(time_value * 0.14 + float(slash) * 1.3) * 0.05
+		var direction := Vector2(cos(angle), sin(angle))
+		var normal := Vector2(-direction.y, direction.x)
+
+		var phase: float = fposmod(time_value * 0.055 + float(slash) * 0.21, 1.0)
+		var offset: float = (phase - 0.5) * _universe_radius() * 1.72
+		var span: float = _chord_half(absf(offset))
+		if span <= 1.0:
+			continue
+
+		var middle: Vector2 = center + normal * offset
+		var thickness: float = radius * (0.016 + 0.009 * float(slash % 3))
+		thickness *= 1.0 + reaction * 0.85 + beat * 0.25
+
+		var blade_color: Color = primary.lerp(accent, float(slash % 3) * 0.34)
+		var fade: float = sin(PI * phase)
+		blade_color.a = intensity * (0.46 + beat * 0.16 + reaction * 0.34) * fade
+
+		draw_colored_polygon(
+			PackedVector2Array([
+				middle - direction * span,
+				middle + normal * thickness,
+				middle + direction * span,
+				middle - normal * thickness,
+			]),
+			blade_color
 		)
-		layer_radius += sin(time_value * 3.2 + float(layer)) * radius * 0.010 * reaction
-		var count: int = 6 + layer * 2
-		var direction_sign: float = (
-			1.0 if layer % 2 == 0 else -1.0
+
+		# Fio de luz no meio da lamina e estilhacos saltando do corte.
+		draw_line(
+			middle - direction * span * 0.86,
+			middle + direction * span * 0.86,
+			Color(1.0, 1.0, 1.0, intensity * 0.28 * fade),
+			maxf(1.0, radius * 0.0016),
+			true
 		)
-		var layer_rotation: float = (
-			rotation * direction_sign * (0.35 + float(layer) * 0.04 + reaction * 0.20)
+
+		for shard in range(3):
+			var along: float = -0.52 + float(shard) * 0.52
+			var side: float = 1.0 if shard % 2 == 0 else -1.0
+			var shard_position: Vector2 = (
+				middle
+				+ direction * span * along
+				+ normal * radius * (0.030 + 0.012 * float(shard)) * side
+			)
+			if shard_position.distance_to(center) > _universe_radius():
+				continue
+			_draw_regular_polygon(
+				shard_position,
+				radius * (0.026 + 0.009 * float(shard)),
+				3,
+				angle + PI * 0.5 + time_value * 0.55 * side,
+				Color(accent.r, accent.g, accent.b, intensity * (0.62 + reaction * 0.35) * fade),
+				maxf(2.0, radius * 0.0034)
+			)
+
+
+## DRAGON BALL — aura de ki. Linguas de energia tremulam a partir do
+## nucleo e ondas de choque sobem em direcao a borda.
+func _draw_universe_ki_aura(
+	time_value: float,
+	intensity: float,
+	beat: float,
+	reaction: float,
+	primary: Color,
+	accent: Color
+) -> void:
+	var core: float = radius * (0.085 + beat * 0.012 + reaction * 0.02)
+	_draw_soft_glow(
+		center,
+		radius * (0.22 + reaction * 0.12),
+		accent,
+		intensity * (0.50 + beat * 0.20),
+		3
+	)
+
+	for tongue in range(16):
+		var base_angle: float = TAU * float(tongue) / 16.0
+		var flicker: float = 0.5 + 0.5 * sin(
+			time_value * (3.4 + float(tongue % 5) * 0.31) + float(tongue) * 1.7
+		)
+		var length: float = radius * (0.26 + 0.30 * flicker + reaction * 0.10)
+		var points := PackedVector2Array()
+		for step in range(6):
+			var t: float = float(step) / 5.0
+			var sway: float = sin(time_value * 4.2 + float(tongue) * 2.1 + t * 6.0)
+			var angle: float = base_angle + sway * 0.075 * (1.0 - t * 0.55)
+			points.append(
+				center
+				+ Vector2(cos(angle), sin(angle)) * minf(core + (length - core) * t, _universe_radius())
+			)
+		var tongue_color: Color = primary.lerp(accent, flicker * 0.60)
+		draw_polyline(
+			points,
+			Color(tongue_color.r, tongue_color.g, tongue_color.b, intensity * (0.30 + flicker * 0.42)),
+			maxf(1.5, radius * (0.0022 + flicker * 0.0016)),
+			true
 		)
 
-		for index in range(count):
-			var angle: float = (
-				layer_rotation
-				+ TAU * float(index) / float(count)
-			)
-			var direction: Vector2 = Vector2(
-				cos(angle),
-				sin(angle)
-			)
-			var position_value: Vector2 = (
-				center + direction * layer_radius
-			)
-			var size: float = radius * (
-				0.024 + float(layer) * 0.0032
-			)
-			var mix_value: float = float(
-				(index + layer) % 4
-			) / 4.0
-			# Deriva lenta de matiz entre primary/secondary/accent —
-			# em vez de cor fixa por indice, da uma leitura mais viva
-			# e "espectral" (aurora), nao uma grade tecnica estatica.
-			var drift_mix: float = 0.5 + 0.5 * sin(
-				time_value * 0.55 + float(layer) * 1.7 + float(index) * 0.42
-			)
-			var color: Color = primary.lerp(
-				secondary,
-				drift_mix * 0.30
-			).lerp(
-				accent,
-				mix_value * 0.55
-			)
-			color.a = intensity * (0.20 + float(layer) * 0.024) + beat * 0.018 + reaction * 0.055
-
-			# Brilho suave por tras do elemento. So em um a cada dois
-			# elementos: visualmente o halo se funde com o do vizinho
-			# de qualquer forma, e isso corta pela metade a quantidade
-			# de circulos preenchidos por frame (parte mais cara do
-			# fundo, que roda em TODO frame de gameplay).
-			if (index + layer) % 2 == 0:
-				_draw_soft_glow(
-					position_value,
-					size * 2.9,
-					color,
-					(intensity * 0.7 + reaction * 0.34) * (0.5 + beat * 0.3),
-					2
-				)
-
-			# 8 fundos distintos, um por musica: cada shape/leitura muda
-			# bastante a personalidade da tela sem precisar de arte nova.
-			match configured_pattern:
-				"hex":
-					_draw_regular_polygon(
-						position_value,
-						size,
-						6,
-						angle + rotation * 0.16,
-						color,
-						maxf(1.5, radius * 0.0028)
-					)
-				"radial":
-					_draw_regular_polygon(
-						position_value,
-						size,
-						8,
-						angle,
-						color,
-						maxf(1.5, radius * 0.0028)
-					)
-				"grid":
-					_draw_rotated_diamond(
-						position_value,
-						size * 1.10,
-						angle + PI * 0.25,
-						color,
-						maxf(1.5, radius * 0.0028)
-					)
-				"spiral":
-					# Lamina fina em rotacao acentuada — leitura de
-					# redemoinho/espiral (Naruto/Uzumaki).
-					_draw_regular_polygon(
-						position_value,
-						size * 0.95,
-						3,
-						angle + rotation * 0.85,
-						color,
-						maxf(1.5, radius * 0.0026)
-					)
-				"waves":
-					# Traco tangencial ao circulo — le como crista de onda.
-					var tangent_dir := Vector2(-direction.y, direction.x)
-					draw_line(
-						position_value - tangent_dir * size * 0.95,
-						position_value + tangent_dir * size * 0.95,
-						color,
-						maxf(2.0, radius * 0.0032),
-						true
-					)
-				"orbits":
-					# Aneis finos no lugar de formas solidas — leitura de
-					# orbitas/particulas magneticas.
-					draw_arc(
-						position_value,
-						size * 0.62,
-						0.0,
-						TAU,
-						14,
-						color,
-						maxf(1.5, radius * 0.0026),
-						true
-					)
-				"shards":
-					# Estilhacos triangulares alongados — leitura cristalina.
-					_draw_regular_polygon(
-						position_value,
-						size * 1.30,
-						3,
-						angle + PI * 0.5,
-						color,
-						maxf(1.5, radius * 0.0030)
-					)
-				_:
-					_draw_rotated_diamond(
-						position_value,
-						size * 1.18,
-						angle + PI * 0.25,
-						color,
-						maxf(1.5, radius * 0.0030)
-					)
-
-			if layer >= 3 and index % 2 == 0:
-				var inner_position: Vector2 = (
-					center + direction * (layer_radius - radius * 0.070)
-				)
-				draw_line(
-					inner_position,
-					position_value,
-					Color(
-						color.r,
-						color.g,
-						color.b,
-						intensity * 0.16
-					),
-					maxf(1.0, radius * 0.0018),
-					true
-				)
-
-	# Flor central geometrica, inteira e brilhante.
-	for petal in range(8):
-		var petal_angle: float = (
-			-rotation * 0.55
-			+ TAU * float(petal) / 8.0
+	for shock in range(3):
+		var progress: float = fposmod(time_value * 0.32 + float(shock) / 3.0, 1.0)
+		var shock_radius: float = radius * (0.14 + progress * 0.66)
+		draw_arc(
+			center,
+			shock_radius,
+			0.0,
+			TAU,
+			72,
+			Color(accent.r, accent.g, accent.b, intensity * (1.0 - progress) * 0.46),
+			maxf(1.5, radius * 0.0030 * (1.0 - progress * 0.5)),
+			true
 		)
-		var petal_position: Vector2 = (
+
+	draw_circle(center, core, Color(accent.r, accent.g, accent.b, intensity * 0.85), true)
+	draw_circle(center, core * 0.52, Color(1.0, 1.0, 1.0, intensity * 0.70), true)
+
+
+## DEMON — respiracao. Faixas horizontais varrem o disco de baixo para
+## cima, com escamas ao longo da crista. Leitura totalmente linear, sem
+## simetria radial.
+func _draw_universe_breath_waves(
+	time_value: float,
+	intensity: float,
+	beat: float,
+	reaction: float,
+	primary: Color,
+	secondary: Color,
+	accent: Color
+) -> void:
+	for band in range(6):
+		var slot: float = fposmod(float(band) / 6.0 - time_value * 0.045, 1.0)
+		var y: float = (slot - 0.5) * 2.0 * _universe_radius()
+		var half_width: float = _chord_half(absf(y))
+		if half_width <= 1.0:
+			continue
+
+		var band_color: Color = primary.lerp(secondary, float(band) / 5.0)
+		var alpha: float = intensity * (0.54 + beat * 0.16 + reaction * 0.28)
+		alpha *= sin(PI * clampf(slot, 0.0, 1.0))
+
+		var crest := PackedVector2Array()
+		for step in range(21):
+			var t: float = float(step) / 20.0
+			var x: float = -half_width + 2.0 * half_width * t
+			var wave: float = sin(t * 6.8 + time_value * 1.15 + float(band) * 0.85)
+			crest.append(center + Vector2(x, y + wave * radius * 0.028))
+		draw_polyline(
+			crest,
+			Color(band_color.r, band_color.g, band_color.b, alpha),
+			maxf(2.0, radius * 0.0040),
+			true
+		)
+
+		# Escamas: meio-arcos apoiados na crista, como agua quebrando.
+		for scale_index in range(5):
+			var t2: float = 0.12 + float(scale_index) * 0.19
+			var x2: float = -half_width + 2.0 * half_width * t2
+			var wave2: float = sin(t2 * 6.8 + time_value * 1.15 + float(band) * 0.85)
+			var scale_position: Vector2 = center + Vector2(x2, y + wave2 * radius * 0.028)
+			draw_arc(
+				scale_position,
+				radius * 0.026,
+				PI,
+				TAU,
+				12,
+				Color(accent.r, accent.g, accent.b, alpha * 0.72),
+				maxf(1.5, radius * 0.0024),
+				true
+			)
+
+
+## FAIRY — enxame de runas. Glifos flutuam em orbitas irregulares com
+## poeira magica ao redor. Nada e concentrico nem alinhado.
+func _draw_universe_rune_swarm(
+	time_value: float,
+	intensity: float,
+	beat: float,
+	reaction: float,
+	primary: Color,
+	secondary: Color,
+	accent: Color
+) -> void:
+	for rune in range(10):
+		var seed_value: float = float(rune) * 12.9898
+		var base_angle: float = fposmod(absf(sin(seed_value) * 43758.5453), TAU)
+		var orbit: float = radius * (0.18 + fposmod(absf(cos(seed_value * 0.73)) * 9.7, 0.50))
+		var direction_sign: float = -1.0 if rune % 2 == 0 else 1.0
+		var breath: float = sin(time_value * (0.55 + float(rune % 3) * 0.18) + seed_value)
+		var angle: float = base_angle + time_value * 0.055 * direction_sign + breath * 0.10
+		var rune_position: Vector2 = (
+			center + Vector2(cos(angle), sin(angle)) * (orbit + breath * radius * 0.030)
+		)
+		var glow: float = 0.5 + 0.5 * sin(time_value * 1.7 + seed_value)
+		var rune_color: Color = primary.lerp(secondary, float(rune % 3) * 0.32)
+		var alpha: float = intensity * (0.52 + glow * 0.40 + reaction * 0.28)
+
+		_draw_soft_glow(rune_position, radius * 0.070, rune_color, alpha * 0.60, 3)
+
+		var sparkle := _star_points(
+			radius * (0.044 + glow * 0.008),
+			radius * 0.012,
+			angle + time_value * 0.35 * direction_sign,
+			rune_position,
+			4
+		)
+		sparkle.append(sparkle[0])
+		draw_polyline(
+			sparkle,
+			Color(rune_color.r, rune_color.g, rune_color.b, alpha),
+			maxf(2.0, radius * 0.0038),
+			true
+		)
+		draw_arc(
+			rune_position,
+			radius * (0.058 + beat * 0.005),
+			angle,
+			angle + PI * 1.45,
+			20,
+			Color(accent.r, accent.g, accent.b, alpha * 0.66),
+			maxf(1.5, radius * 0.0026),
+			true
+		)
+
+	for mote in range(20):
+		var mote_seed: float = float(mote) * 7.517 + 3.19
+		var mote_angle: float = fposmod(absf(sin(mote_seed) * 21311.71), TAU)
+		var mote_orbit: float = radius * (0.12 + fposmod(absf(cos(mote_seed * 1.31)) * 5.3, 0.66))
+		var rise: float = fposmod(time_value * 0.10 + float(mote) * 0.07, 1.0)
+		var mote_position: Vector2 = (
 			center
-			+ Vector2(cos(petal_angle), sin(petal_angle))
-			* radius * 0.105
+			+ Vector2(cos(mote_angle + rise * 0.55), sin(mote_angle + rise * 0.55))
+			* minf(mote_orbit + rise * radius * 0.10, _universe_radius())
 		)
-		_draw_soft_glow(
-			petal_position,
-			radius * (0.070 + beat * 0.010),
-			primary,
-			0.14 + reaction * 0.10,
-			2
+		var twinkle: float = 0.5 + 0.5 * sin(time_value * 2.6 + mote_seed)
+		draw_circle(
+			mote_position,
+			maxf(1.0, radius * (0.0018 + twinkle * 0.0016)),
+			Color(accent.r, accent.g, accent.b, intensity * (0.30 + twinkle * 0.55) * (1.0 - rise)),
+			true
 		)
+
+
+## NARUTO — selo em espiral. Uma unica espiral longa domina a tela,
+## fechada por um anel de marcas. Nada de mandala de cristais.
+func _draw_universe_spiral_seal(
+	time_value: float,
+	rotation: float,
+	intensity: float,
+	beat: float,
+	reaction: float,
+	primary: Color,
+	accent: Color
+) -> void:
+	# O numero de voltas respira devagar: o redemoinho aperta e afrouxa
+	# em vez de girar sempre igual.
+	var turns: float = 3.15 + sin(time_value * 0.22) * 0.18
+	var spiral := PackedVector2Array()
+	for step in range(89):
+		var t: float = float(step) / 88.0
+		var angle: float = rotation * 0.85 + t * TAU * turns
+		var spiral_radius: float = radius * 0.055 + t * _universe_radius() * 0.76
+		spiral.append(center + Vector2(cos(angle), sin(angle)) * spiral_radius)
+
+	draw_polyline(
+		spiral,
+		Color(primary.r, primary.g, primary.b, intensity * (0.42 + reaction * 0.34)),
+		maxf(2.0, radius * 0.0052 * (1.0 + beat * 0.20)),
+		true
+	)
+
+	# Segunda espiral, oposta e mais fina, dando profundidade ao redemoinho.
+	var counter := PackedVector2Array()
+	for step2 in range(67):
+		var t2: float = float(step2) / 66.0
+		var angle2: float = -rotation * 0.55 - t2 * TAU * (turns * 0.70) + PI
+		var counter_radius: float = radius * 0.10 + t2 * _universe_radius() * 0.62
+		counter.append(center + Vector2(cos(angle2), sin(angle2)) * counter_radius)
+	draw_polyline(
+		counter,
+		Color(accent.r, accent.g, accent.b, intensity * 0.30),
+		maxf(1.0, radius * 0.0026),
+		true
+	)
+
+	var seal_radius: float = _universe_radius() * 0.92
+	draw_arc(
+		center,
+		seal_radius,
+		0.0,
+		TAU,
+		120,
+		Color(accent.r, accent.g, accent.b, intensity * (0.34 + beat * 0.10)),
+		maxf(1.5, radius * 0.0032),
+		true
+	)
+	for tick in range(24):
+		var tick_angle: float = -rotation * 0.32 + TAU * float(tick) / 24.0
+		var tick_direction := Vector2(cos(tick_angle), sin(tick_angle))
+		var tick_length: float = radius * (0.040 if tick % 3 == 0 else 0.020)
+		draw_line(
+			center + tick_direction * seal_radius,
+			center + tick_direction * (seal_radius - tick_length),
+			Color(primary.r, primary.g, primary.b, intensity * (0.46 if tick % 3 == 0 else 0.24)),
+			maxf(1.5, radius * 0.0026),
+			true
+		)
+
+
+## RICK AND MORTY — laboratorio. Grade cartesiana em fuga e um portal
+## eliptico com redemoinho. Leitura retilinea, o oposto de radial.
+func _draw_universe_portal_lab(
+	time_value: float,
+	rotation: float,
+	intensity: float,
+	beat: float,
+	reaction: float,
+	primary: Color,
+	secondary: Color,
+	accent: Color
+) -> void:
+	var spacing: float = _universe_radius() * 0.208
+	var drift: float = fposmod(time_value * radius * 0.020, spacing)
+
+	for column in range(-5, 6):
+		var x: float = float(column) * spacing + drift - spacing * 0.5
+		var column_half: float = _chord_half(absf(x))
+		if column_half <= 1.0:
+			continue
+		draw_line(
+			center + Vector2(x, -column_half),
+			center + Vector2(x, column_half),
+			Color(primary.r, primary.g, primary.b, intensity * (0.20 + beat * 0.06)),
+			maxf(1.0, radius * 0.0018),
+			true
+		)
+
+	for row in range(-5, 6):
+		var y: float = float(row) * spacing - drift + spacing * 0.5
+		var row_half: float = _chord_half(absf(y))
+		if row_half <= 1.0:
+			continue
+		draw_line(
+			center + Vector2(-row_half, y),
+			center + Vector2(row_half, y),
+			Color(secondary.r, secondary.g, secondary.b, intensity * 0.14),
+			maxf(1.0, radius * 0.0016),
+			true
+		)
+
+	# Portal: elipse com redemoinho interno e borda mais viva.
+	var portal_size := Vector2(_universe_radius() * 0.46, _universe_radius() * 0.34)
+	_draw_soft_glow(center, portal_size.y * 1.25, accent, intensity * (0.42 + reaction * 0.26), 3)
+
+	for layer in range(3):
+		var ellipse := PackedVector2Array()
+		var scale_value: float = 1.0 - float(layer) * 0.24
+		for step in range(41):
+			var angle: float = TAU * float(step) / 40.0
+			ellipse.append(
+				center
+				+ Vector2(
+					cos(angle) * portal_size.x * scale_value,
+					sin(angle) * portal_size.y * scale_value
+				)
+			)
+		draw_polyline(
+			ellipse,
+			Color(accent.r, accent.g, accent.b, intensity * (0.50 - float(layer) * 0.12)),
+			maxf(1.5, radius * (0.0034 - float(layer) * 0.0008)),
+			true
+		)
+
+	var swirl := PackedVector2Array()
+	for step2 in range(49):
+		var t: float = float(step2) / 48.0
+		var angle2: float = rotation * 1.35 + t * TAU * 1.85
+		swirl.append(
+			center
+			+ Vector2(
+				cos(angle2) * portal_size.x * (1.0 - t) * 0.90,
+				sin(angle2) * portal_size.y * (1.0 - t) * 0.90
+			)
+		)
+	draw_polyline(
+		swirl,
+		Color(primary.r, primary.g, primary.b, intensity * 0.55),
+		maxf(1.5, radius * 0.0030),
+		true
+	)
+
+
+## SOUL — favo e lua. Placas hexagonais preenchem o disco e uma lua
+## crescente atravessa o campo. Grade compacta, sem centro dominante.
+func _draw_universe_moon_hive(
+	time_value: float,
+	rotation: float,
+	intensity: float,
+	beat: float,
+	reaction: float,
+	primary: Color,
+	secondary: Color,
+	accent: Color
+) -> void:
+	var cell: float = _universe_radius() * 0.185
+	var breathe: float = 0.90 + 0.08 * sin(time_value * 1.25) + beat * 0.05
+
+	for column in range(-4, 5):
+		for row in range(-4, 5):
+			var offset_y: float = cell * 0.866 if posmod(column, 2) == 1 else 0.0
+			var cell_position: Vector2 = center + Vector2(
+				float(column) * cell * 1.50,
+				float(row) * cell * 1.732 + offset_y
+			)
+			var distance_value: float = cell_position.distance_to(center)
+			if distance_value > _universe_radius() - cell * 0.55:
+				continue
+
+			var depth: float = 1.0 - clampf(distance_value / maxf(_universe_radius(), 1.0), 0.0, 1.0)
+			var wobble: float = sin(time_value * 1.05 + float(column) * 0.8 + float(row) * 0.6)
+			var plate_color: Color = primary.lerp(secondary, 0.30 + wobble * 0.20)
+			_draw_regular_polygon(
+				cell_position,
+				cell * 0.52 * breathe,
+				6,
+				PI / 6.0 + rotation * 0.05,
+				Color(
+					plate_color.r,
+					plate_color.g,
+					plate_color.b,
+					intensity * (0.28 + depth * 0.42 + reaction * 0.24)
+				),
+				maxf(1.5, radius * 0.0028)
+			)
+
+	# Lua crescente: dois arcos deslocados formando a foice.
+	var moon_center: Vector2 = center + Vector2(
+		-_universe_radius() * 0.24,
+		-_universe_radius() * 0.20
+	)
+	var moon_radius: float = _universe_radius() * 0.30
+	var swing: float = sin(time_value * 0.28) * 0.16
+	draw_arc(
+		moon_center,
+		moon_radius,
+		-PI * 0.62 + swing,
+		PI * 0.62 + swing,
+		48,
+		Color(accent.r, accent.g, accent.b, intensity * (0.62 + beat * 0.14)),
+		maxf(2.0, radius * 0.0048),
+		true
+	)
+	draw_arc(
+		moon_center + Vector2(moon_radius * 0.42, 0.0),
+		moon_radius * 0.92,
+		-PI * 0.52 + swing,
+		PI * 0.52 + swing,
+		42,
+		Color(accent.r, accent.g, accent.b, intensity * 0.40),
+		maxf(1.5, radius * 0.0034),
+		true
+	)
+
+
+## Universo neutro para musicas futuras que ainda nao tenham cenario
+## proprio. Prismas em deriva, sem a mandala concentrica antiga.
+func _draw_universe_prism_field(
+	time_value: float,
+	rotation: float,
+	intensity: float,
+	beat: float,
+	reaction: float,
+	primary: Color,
+	secondary: Color,
+	accent: Color
+) -> void:
+	for prism in range(16):
+		var seed_value: float = float(prism) * 9.371
+		var lane_angle: float = TAU * float(prism) / 16.0 + rotation * 0.22
+		var travel: float = fposmod(time_value * 0.075 + float(prism) * 0.0625, 1.0)
+		var prism_radius: float = _universe_radius() * (0.14 + travel * 0.74)
+		var prism_position: Vector2 = (
+			center + Vector2(cos(lane_angle), sin(lane_angle)) * prism_radius
+		)
+		var fade: float = sin(PI * travel)
+		var prism_color: Color = primary.lerp(
+			secondary if prism % 2 == 0 else accent,
+			0.35 + 0.30 * sin(time_value * 0.6 + seed_value)
+		)
+		var size: float = radius * (0.018 + travel * 0.020)
+
 		_draw_rotated_diamond(
-			petal_position,
-			radius * (0.050 + beat * 0.006),
-			petal_angle + PI * 0.25,
-			Color(primary.r, primary.g, primary.b, 0.16),
-			maxf(2.0, radius * 0.0040)
+			prism_position,
+			size,
+			lane_angle + time_value * 0.45,
+			Color(
+				prism_color.r,
+				prism_color.g,
+				prism_color.b,
+				intensity * (0.30 + reaction * 0.30 + beat * 0.10) * fade
+			),
+			maxf(1.5, radius * 0.0028)
+		)
+		draw_line(
+			prism_position - Vector2(cos(lane_angle), sin(lane_angle)) * size * 2.2,
+			prism_position,
+			Color(prism_color.r, prism_color.g, prism_color.b, intensity * 0.20 * fade),
+			maxf(1.0, radius * 0.0018),
+			true
 		)
 
-	_draw_soft_glow(center, radius * 0.135, secondary, 0.10 + reaction * 0.10, 2)
-	_draw_regular_polygon(
-		center,
-		radius * (0.095 + beat * 0.008),
-		8,
-		rotation * 0.28,
-		Color(secondary.r, secondary.g, secondary.b, 0.16),
-		maxf(2.0, radius * 0.0042)
-	)
-	_draw_regular_polygon(
-		center,
-		radius * (0.062 + beat * 0.006),
-		6,
-		-rotation * 0.45,
-		Color(accent.r, accent.g, accent.b, 0.24),
-		maxf(2.0, radius * 0.0045)
-	)
 
-
+## Poeira ambiente com movimento proprio de cada universo: orbital,
+## ascendente, lateral ou em queda. Assim nem a camada de particulas
+## fica igual entre duas telas.
 func _draw_ambient_particles() -> void:
-	# Particulas deterministicas em tres profundidades. Cada uma usa
-	# gradiente em camadas (em vez de dois circulos chapados) e um
-	# rastro curto na direcao do movimento — le como poeira de energia
-	# em vez de bolinhas soltas. A orbita minima fica mais afastada do
-	# centro pra nao amontoar tudo no meio do tabuleiro.
 	var time_value: float = _idle_time()
 	var beat: float = _beat_pulse()
 	var palette: Array[Color] = [_primary(), _secondary(), _accent()]
+	var style: String = _universe_style()
+
 	for index in range(18):
-		var seed: float = float(index) * 12.9898
+		var seed_value: float = float(index) * 12.9898
 		var depth: float = 0.35 + float(index % 3) * 0.27
-		var base_angle: float = fmod(absf(sin(seed) * 43758.5453), TAU)
-		var orbit: float = radius * (0.24 + fmod(absf(cos(seed * 0.73)) * 9.7, 0.62))
+		var base_angle: float = fposmod(absf(sin(seed_value) * 43758.5453), TAU)
+		var orbit: float = radius * (0.24 + fposmod(absf(cos(seed_value * 0.73)) * 9.7, 0.58))
 		var direction_sign: float = -1.0 if index % 2 == 0 else 1.0
 		var angular_speed: float = (0.018 + depth * 0.022) * direction_sign
 		var angle: float = base_angle + time_value * angular_speed
-		var drift: float = sin(time_value * (0.32 + depth * 0.16) + seed) * radius * 0.012
-		var particle_position: Vector2 = center + Vector2(cos(angle), sin(angle)) * (orbit + drift)
-		var particle_color: Color = palette[index % palette.size()]
-		var twinkle: float = 0.5 + 0.5 * sin(time_value * (1.2 + depth) + seed)
-		var size: float = radius * (0.0026 + depth * 0.0026 + beat * 0.0010)
+		var drift: float = sin(time_value * (0.32 + depth * 0.16) + seed_value) * radius * 0.012
 
-		# Rastro: amostra a posicao um instante atras no tempo, na
-		# mesma orbita, e desenha uma linha fina que desvanece.
+		var particle_position: Vector2 = center + Vector2(cos(angle), sin(angle)) * (orbit + drift)
 		var trail_angle: float = angle - angular_speed * 0.24
 		var trail_position: Vector2 = center + Vector2(cos(trail_angle), sin(trail_angle)) * (orbit + drift)
+
+		match style:
+			"ki_aura", "spiral_seal":
+				# Faiscas subindo: o eixo vertical domina.
+				var rise: float = fposmod(time_value * (0.10 + depth * 0.08) + seed_value * 0.11, 1.0)
+				var lateral: float = sin(seed_value + time_value * 0.5) * radius * 0.42
+				particle_position = center + Vector2(
+					lateral,
+					_universe_radius() * (0.80 - rise * 1.60)
+				)
+				trail_position = particle_position + Vector2(0.0, radius * 0.030)
+			"breath_waves", "portal_lab":
+				# Deriva lateral continua, acompanhando a leitura linear.
+				var slide: float = fposmod(time_value * (0.09 + depth * 0.05) + seed_value * 0.13, 1.0)
+				var height: float = sin(seed_value * 1.7) * _universe_radius() * 0.52
+				particle_position = center + Vector2(
+					_universe_radius() * (slide * 1.60 - 0.80) * direction_sign,
+					height + sin(time_value + seed_value) * radius * 0.020
+				)
+				trail_position = particle_position - Vector2(radius * 0.030 * direction_sign, 0.0)
+			"moon_hive":
+				# Cinzas caindo devagar.
+				var fall: float = fposmod(time_value * (0.07 + depth * 0.05) + seed_value * 0.17, 1.0)
+				var column: float = sin(seed_value * 2.3) * _universe_radius() * 0.50
+				particle_position = center + Vector2(
+					column + sin(time_value * 0.6 + seed_value) * radius * 0.020,
+					_universe_radius() * (fall * 1.60 - 0.80)
+				)
+				trail_position = particle_position - Vector2(0.0, radius * 0.030)
+			_:
+				pass
+
+		if particle_position.distance_to(center) > _universe_radius():
+			continue
+
+		var particle_color: Color = palette[index % palette.size()]
+		var twinkle: float = 0.5 + 0.5 * sin(time_value * (1.2 + depth) + seed_value)
+		var size: float = radius * (0.0026 + depth * 0.0026 + beat * 0.0010)
+
 		draw_line(
 			trail_position,
 			particle_position,
@@ -713,7 +1173,6 @@ func _draw_ambient_particles() -> void:
 			maxf(1.0, size * 0.9),
 			true
 		)
-
 		_draw_soft_glow(
 			particle_position,
 			size * 3.1,
@@ -734,169 +1193,6 @@ func _draw_ambient_particles() -> void:
 			true
 		)
 
-func _draw_diamond_field(
-	rotation: float,
-	intensity: float,
-	primary: Color,
-	secondary: Color,
-	section: int
-) -> void:
-	for ring in range(2, 6):
-		var count: int = 8 + section * 2
-		var ring_radius: float = radius * (0.16 + float(ring) * 0.115)
-		for index in range(count):
-			var angle: float = rotation * (1.0 if ring % 2 == 0 else -0.65)
-			angle += TAU * float(index) / float(count)
-			var position_value: Vector2 = center + Vector2(cos(angle), sin(angle)) * ring_radius
-			var size: float = radius * (0.026 + float(ring) * 0.0025)
-			var color: Color = primary.lerp(secondary, float(index % 3) * 0.16)
-			color.a = intensity * (0.27 + float(ring) * 0.025)
-			_draw_diamond(position_value, size, color, maxf(1.0, radius * 0.0022))
-
-
-func _draw_hex_field(
-	rotation: float,
-	intensity: float,
-	primary: Color,
-	accent: Color,
-	section: int
-) -> void:
-	for ring in range(2, 6):
-		var count: int = 6 + (section % 2) * 6
-		var ring_radius: float = radius * (0.14 + float(ring) * 0.125)
-		for index in range(count):
-			var angle: float = rotation * (0.65 if ring % 2 == 0 else -0.44)
-			angle += TAU * float(index) / float(count)
-			var position_value: Vector2 = center + Vector2(cos(angle), sin(angle)) * ring_radius
-			var color: Color = primary.lerp(accent, float(index % 4) * 0.08)
-			color.a = intensity * 0.34
-			_draw_regular_polygon(
-				position_value,
-				radius * (0.032 + float(ring) * 0.002),
-				6,
-				rotation * 0.30,
-				color,
-				maxf(1.0, radius * 0.002)
-			)
-
-
-func _draw_radial_field(
-	rotation: float,
-	intensity: float,
-	primary: Color,
-	secondary: Color,
-	beat: float
-) -> void:
-	for index in range(32):
-		var angle: float = rotation * 0.30 + TAU * float(index) / 32.0
-		var direction := Vector2(cos(angle), sin(angle))
-		var length_factor: float = 0.54 + 0.11 * absf(sin(float(index) * 0.72 + rotation))
-		var color: Color = primary.lerp(secondary, float(index % 4) * 0.10)
-		color.a = intensity * (0.12 + beat * 0.08)
-		draw_line(
-			center + direction * radius * 0.20,
-			center + direction * radius * length_factor,
-			color,
-			maxf(1.0, radius * 0.0018),
-			true
-		)
-
-
-func _draw_grid_field(
-	rotation: float,
-	intensity: float,
-	primary: Color,
-	accent: Color
-) -> void:
-	var spacing: float = radius * 0.115
-	var offset: float = fmod(rotation * radius * 0.08, spacing)
-	for index in range(-6, 7):
-		var value: float = float(index) * spacing + offset
-		draw_line(
-			center + Vector2(value, -radius * 0.68),
-			center + Vector2(value, radius * 0.68),
-			Color(primary.r, primary.g, primary.b, intensity * 0.12),
-			maxf(1.0, radius * 0.0015),
-			true
-		)
-		draw_line(
-			center + Vector2(-radius * 0.68, value),
-			center + Vector2(radius * 0.68, value),
-			Color(accent.r, accent.g, accent.b, intensity * 0.09),
-			maxf(1.0, radius * 0.0015),
-			true
-		)
-
-
-func _draw_orbit_nodes(rotation: float, intensity: float, color: Color) -> void:
-	for index in range(12):
-		var angle: float = -rotation * 0.48 + TAU * float(index) / 12.0
-		var orbit_radius: float = radius * (0.28 + 0.028 * float(index % 4))
-		var position_value: Vector2 = center + Vector2(cos(angle), sin(angle)) * orbit_radius
-		draw_circle(
-			position_value,
-			maxf(1.5, radius * 0.004),
-			Color(color.r, color.g, color.b, intensity * 0.30),
-			true
-		)
-
-
-func _draw_inner_technical_rings() -> void:
-	var time_value: float = _idle_time()
-	var primary: Color = _primary()
-	var accent: Color = _accent()
-	var reaction: float = _hit_energy + _combo_energy * 0.34
-	var hit_mix: float = clampf(_hit_color_energy * 4.0, 0.0, 1.0)
-	var reactive_primary: Color = primary.lerp(_hit_color, hit_mix)
-	var reactive_accent: Color = accent.lerp(_hit_color, hit_mix)
-	var carmine_factor: float = 1.30 if str(song.get("id", "")) == "carmine" else 1.0
-	reaction *= carmine_factor
-	if _hit_color_energy > 0.015:
-		_draw_soft_glow(
-			center,
-			radius * (0.31 + _hit_color_energy * 0.16),
-			_hit_color,
-			_hit_color_energy * 0.24,
-			3
-		)
-
-	# Substitui os antigos segmentos redondos por molduras poligonais.
-	for layer in range(3):
-		var sides: int = 8 if layer != 1 else 12
-		var layer_size: float = radius * (
-			0.34 + float(layer) * 0.13
-		)
-		layer_size += sin(time_value * 5.0 + float(layer) * 1.7) * radius * 0.012 * reaction
-		var rotation_value: float = time_value * (
-			0.055 + float(layer) * 0.025 + reaction * 0.12
-		)
-		var color: Color = reactive_primary if layer % 2 == 0 else reactive_accent
-		_draw_regular_polygon(
-			center,
-			layer_size,
-			sides,
-			rotation_value * (1.0 if layer % 2 == 0 else -1.0),
-			Color(color.r, color.g, color.b, 0.11),
-			maxf(1.0, radius * 0.0023)
-		)
-
-		for node_index in range(sides):
-			var angle: float = (
-				rotation_value
-				+ TAU * float(node_index) / float(sides)
-				+ sin(time_value * 4.2 + float(node_index)) * reaction * 0.055
-			)
-			var node_position: Vector2 = (
-				center
-				+ Vector2(cos(angle), sin(angle)) * layer_size
-			)
-			_draw_rotated_diamond(
-				node_position,
-				radius * (0.014 + reaction * 0.004),
-				angle + PI * 0.25,
-				Color(color.r, color.g, color.b, 0.18 + reaction * 0.18),
-				maxf(1.0, radius * 0.0020)
-			)
 
 func _draw_ring() -> void:
 	var ring_radius: float = radius * 0.905
@@ -1290,14 +1586,19 @@ func _draw_slide(event: Dictionary) -> void:
 	if song_time < hit_time - approach or song_time > end_time + 0.35:
 		return
 
-	var color: Color = Color(0.04, 0.93, 1.0, 1.0)
-	var accent: Color = Color(0.82, 1.0, 1.0, 1.0)
+	# A trilha, as setas e a estrela saem na cor do proprio tazo que
+	# gerou o arrasto (o realce e a mesma cor, so mais clara). Antes
+	# tudo era ciano fixo, entao um arrasto vermelho aparecia azul.
+	var color: Color = TAP_PALETTE.color_for_index(int(event.get("color_index", 0)))
+	var accent: Color = TAP_PALETTE.highlight(color)
+	var arrow_style: int = int(event.get("arrow_style", 0))
+	var star_style: int = int(event.get("star_style", 0))
 	var visual_progress: float = clampf(float(event.get("_visual_progress", 0.0)), 0.0, 1.0)
 	var active: bool = bool(event.get("_active", false))
 	var arrows_from: float = visual_progress if active else 0.0
 
 	_draw_slide_rail(points, color)
-	_draw_chevrons(points, lengths, arrows_from, color, accent)
+	_draw_chevrons(points, lengths, arrows_from, color, accent, arrow_style)
 
 	var star_position: Vector2
 	var tangent: Vector2
@@ -1327,7 +1628,8 @@ func _draw_slide(event: Dictionary) -> void:
 				ghost_tangent.angle(),
 				radius * (0.080 - float(ghost_index) * 0.008),
 				Color(color.r, color.g, color.b, 0.14),
-				Color(accent.r, accent.g, accent.b, 0.08)
+				Color(accent.r, accent.g, accent.b, 0.08),
+				star_style
 			)
 
 	_draw_star(
@@ -1335,7 +1637,8 @@ func _draw_slide(event: Dictionary) -> void:
 		tangent.angle(),
 		radius * 0.105 * float(difficulty.get("star_scale", 1.0)),
 		color,
-		accent
+		accent,
+		star_style
 	)
 
 
@@ -1362,7 +1665,8 @@ func _draw_chevrons(
 	lengths: Dictionary,
 	start_progress: float,
 	color: Color,
-	accent: Color
+	accent: Color,
+	style: int = 0
 ) -> void:
 	var spacing: float = radius * 0.052
 	var estimated_length: float = float(lengths.get("total", 0.0))
@@ -1379,17 +1683,41 @@ func _draw_chevrons(
 		var tangent: Vector2 = PATH_BUILDER.tangent_at_cached(points, lengths, progress)
 		var mix_value: float = 0.10 + 0.18 * float(index % 3)
 		var arrow_color: Color = color.lerp(accent, mix_value)
-		_draw_chevron(position_value, tangent, radius * 0.058, arrow_color)
+		_draw_chevron(position_value, tangent, radius * 0.058, arrow_color, style)
 
 
+## Quatro desenhos de seta. A cor sempre chega pronta de quem chamou
+## (cor do tazo); aqui so muda a SILHUETA, para que dois arrastos
+## seguidos nao pareçam a mesma nota repetida.
 func _draw_chevron(
 	position_value: Vector2,
 	direction: Vector2,
 	size: float,
-	color: Color
+	color: Color,
+	style: int = 0
 ) -> void:
 	var tangent: Vector2 = direction.normalized()
 	var perpendicular := Vector2(-tangent.y, tangent.x)
+
+	match posmod(style, TAP_PALETTE.ARROW_STYLE_COUNT):
+		1:
+			_draw_arrow_dart(position_value, tangent, perpendicular, size, color)
+		2:
+			_draw_arrow_double(position_value, tangent, perpendicular, size, color)
+		3:
+			_draw_arrow_feather(position_value, tangent, perpendicular, size, color)
+		_:
+			_draw_arrow_chevron(position_value, tangent, perpendicular, size, color)
+
+
+## Estilo 0 — chevron cheio, a seta classica do jogo.
+func _draw_arrow_chevron(
+	position_value: Vector2,
+	tangent: Vector2,
+	perpendicular: Vector2,
+	size: float,
+	color: Color
+) -> void:
 	var length: float = size * 2.10
 	var half_height: float = size * 0.88
 
@@ -1406,6 +1734,150 @@ func _draw_chevron(
 		position_value - tangent * length * 0.20,
 	])
 
+	_fill_arrow_polygon(polygon, color, size)
+
+	var highlight := PackedVector2Array([
+		rear + perpendicular * half_height * 0.58,
+		inner + perpendicular * half_height * 0.22,
+		tip - tangent * length * 0.10,
+	])
+	draw_polyline(
+		highlight,
+		TAP_PALETTE.highlight(color),
+		maxf(2.0, size * 0.075),
+		true
+	)
+
+
+## Estilo 1 — dardo: ponta longa e fina, com corte reto na traseira.
+func _draw_arrow_dart(
+	position_value: Vector2,
+	tangent: Vector2,
+	perpendicular: Vector2,
+	size: float,
+	color: Color
+) -> void:
+	var length: float = size * 2.95
+	var half_height: float = size * 0.54
+
+	var tip: Vector2 = position_value + tangent * length * 0.66
+	var rear: Vector2 = position_value - tangent * length * 0.40
+
+	var polygon := PackedVector2Array([
+		tip,
+		rear + perpendicular * half_height,
+		rear + perpendicular * half_height * 0.30 - tangent * size * 0.30,
+		rear - perpendicular * half_height * 0.30 - tangent * size * 0.30,
+		rear - perpendicular * half_height,
+	])
+
+	_fill_arrow_polygon(polygon, color, size)
+
+	draw_line(
+		rear + tangent * size * 0.10,
+		tip - tangent * size * 0.30,
+		TAP_PALETTE.highlight(color),
+		maxf(2.0, size * 0.085),
+		true
+	)
+
+
+## Estilo 2 — chevron duplo vazado: duas pontas em "V" seguidas.
+func _draw_arrow_double(
+	position_value: Vector2,
+	tangent: Vector2,
+	perpendicular: Vector2,
+	size: float,
+	color: Color
+) -> void:
+	var half_height: float = size * 0.86
+	var highlight_color: Color = TAP_PALETTE.highlight(color)
+
+	for wing in range(2):
+		var offset: Vector2 = tangent * size * (0.62 - float(wing) * 0.86)
+		var tip: Vector2 = position_value + offset + tangent * size * 0.52
+		var left: Vector2 = position_value + offset - tangent * size * 0.42 + perpendicular * half_height
+		var right: Vector2 = position_value + offset - tangent * size * 0.42 - perpendicular * half_height
+		var stroke := PackedVector2Array([left, tip, right])
+
+		draw_polyline(
+			stroke,
+			Color(0.0, 0.0, 0.0, 0.92),
+			maxf(6.0, size * 0.46),
+			true
+		)
+		draw_polyline(
+			stroke,
+			Color(color.r, color.g, color.b, color.a),
+			maxf(3.5, size * 0.30),
+			true
+		)
+		if wing == 0:
+			draw_polyline(
+				stroke,
+				Color(highlight_color.r, highlight_color.g, highlight_color.b, 0.85),
+				maxf(1.5, size * 0.10),
+				true
+			)
+
+
+## Estilo 3 — flecha com empena: haste central e duas asas curtas.
+func _draw_arrow_feather(
+	position_value: Vector2,
+	tangent: Vector2,
+	perpendicular: Vector2,
+	size: float,
+	color: Color
+) -> void:
+	var length: float = size * 2.30
+	var half_height: float = size * 0.92
+
+	var tip: Vector2 = position_value + tangent * length * 0.60
+	var neck: Vector2 = position_value - tangent * length * 0.02
+	var rear: Vector2 = position_value - tangent * length * 0.52
+
+	var head := PackedVector2Array([
+		tip,
+		neck + perpendicular * half_height,
+		neck + perpendicular * half_height * 0.30,
+		neck - perpendicular * half_height * 0.30,
+		neck - perpendicular * half_height,
+	])
+	_fill_arrow_polygon(head, color, size)
+
+	draw_line(
+		rear,
+		neck,
+		Color(0.0, 0.0, 0.0, 0.92),
+		maxf(5.0, size * 0.40),
+		true
+	)
+	draw_line(
+		rear,
+		neck,
+		color,
+		maxf(3.0, size * 0.24),
+		true
+	)
+
+	var highlight_color: Color = TAP_PALETTE.highlight(color)
+	for side in [-1.0, 1.0]:
+		draw_line(
+			rear + perpendicular * half_height * 0.55 * side,
+			rear + tangent * size * 0.58,
+			Color(highlight_color.r, highlight_color.g, highlight_color.b, 0.90),
+			maxf(1.5, size * 0.11),
+			true
+		)
+
+
+## Preenchimento comum das setas solidas: sombra deslocada, corpo na
+## cor do tazo e contorno escuro derivado da mesma cor.
+func _fill_arrow_polygon(
+	polygon: PackedVector2Array,
+	color: Color,
+	size: float
+) -> void:
 	var shadow_offset := Vector2(radius * 0.009, radius * 0.010)
 	var shadow := PackedVector2Array()
 	for point in polygon:
@@ -1416,52 +1888,66 @@ func _draw_chevron(
 
 	var outline := polygon.duplicate()
 	outline.append(outline[0])
+	var outline_color: Color = TAP_PALETTE.shade(color)
 	draw_polyline(
 		outline,
-		Color(0.01, 0.04, 0.07, 0.98),
+		Color(outline_color.r, outline_color.g, outline_color.b, 0.98),
 		maxf(5.0, size * 0.19),
 		true
 	)
 
-	var highlight := PackedVector2Array([
-		rear + perpendicular * half_height * 0.58,
-		inner + perpendicular * half_height * 0.22,
-		tip - tangent * length * 0.10,
-	])
-	draw_polyline(
-		highlight,
-		Color(0.90, 1.0, 1.0, 0.98),
-		maxf(2.0, size * 0.075),
-		true
-	)
 
 
-
+## Quatro desenhos de estrela para a cabeca do arrasto. Assim como nas
+## setas, so a forma muda: a cor vem do tazo e o realce e a mesma cor
+## clareada, nunca um matiz de outra familia.
 func _draw_star(
 	position_value: Vector2,
 	rotation_value: float,
 	size: float,
 	color: Color,
-	accent: Color
+	accent: Color,
+	style: int = 0
 ) -> void:
 	var pulse: float = 0.5 + 0.5 * sin(_idle_time() * 9.0)
+	var resolved_style: int = posmod(style, TAP_PALETTE.STAR_STYLE_COUNT)
+
+	# Numero de pontas e proporcao interna definem a personalidade de
+	# cada variacao: 5 pontas classica, 6 pontas de cristal, 4 pontas
+	# de brilho alongado e 8 pontas de explosao.
+	var spikes: int = 5
+	var inner_ratio: float = 0.44
+	match resolved_style:
+		1:
+			spikes = 6
+			inner_ratio = 0.54
+		2:
+			spikes = 4
+			inner_ratio = 0.26
+		3:
+			spikes = 8
+			inner_ratio = 0.60
+
 	var outer: PackedVector2Array = _star_points(
 		size * (1.0 + pulse * 0.045),
-		size * 0.44,
+		size * inner_ratio,
 		rotation_value,
-		position_value
+		position_value,
+		spikes
 	)
 	var middle: PackedVector2Array = _star_points(
 		size * 0.73,
-		size * 0.31,
+		size * inner_ratio * 0.70,
 		rotation_value,
-		position_value
+		position_value,
+		spikes
 	)
 	var inner: PackedVector2Array = _star_points(
 		size * 0.48,
-		size * 0.20,
+		size * inner_ratio * 0.45,
 		rotation_value,
-		position_value
+		position_value,
+		spikes
 	)
 	outer.append(outer[0])
 	middle.append(middle[0])
@@ -1475,6 +1961,44 @@ func _draw_star(
 	draw_polyline(outer, Color.WHITE, maxf(7.0, size * 0.16), true)
 	draw_polyline(middle, color, maxf(5.0, size * 0.13), true)
 	draw_polyline(inner, accent, maxf(3.5, size * 0.10), true)
+
+	# Detalhe exclusivo de cada variacao, ainda na cor do objeto.
+	match resolved_style:
+		1:
+			# Cristal: eixos internos ligando pontas opostas.
+			for axis in range(3):
+				var axis_angle: float = rotation_value + PI * float(axis) / 3.0
+				var axis_dir := Vector2(cos(axis_angle), sin(axis_angle))
+				draw_line(
+					position_value - axis_dir * size * 0.62,
+					position_value + axis_dir * size * 0.62,
+					Color(accent.r, accent.g, accent.b, 0.55),
+					maxf(1.5, size * 0.055),
+					true
+				)
+		2:
+			# Brilho: um risco longo no sentido do trajeto.
+			var flare_dir := Vector2(cos(rotation_value), sin(rotation_value))
+			draw_line(
+				position_value - flare_dir * size * 1.32,
+				position_value + flare_dir * size * 1.32,
+				Color(accent.r, accent.g, accent.b, 0.42 + pulse * 0.18),
+				maxf(1.5, size * 0.070),
+				true
+			)
+		3:
+			# Explosao: anel fino amarrando as oito pontas.
+			draw_arc(
+				position_value,
+				size * inner_ratio * 1.06,
+				0.0,
+				TAU,
+				28,
+				Color(accent.r, accent.g, accent.b, 0.50),
+				maxf(1.5, size * 0.050),
+				true
+			)
+
 	draw_circle(position_value, size * 0.18, Color(0.002, 0.006, 0.016, 0.96), true)
 	draw_circle(position_value, size * 0.10, Color.WHITE, true)
 	draw_circle(position_value, size * 0.045, accent, true)
@@ -1500,7 +2024,15 @@ func _draw_effects() -> void:
 		var rotation_value: float = float(effect.get("rotation", 0.0))
 
 		if kind == "slide":
-			_draw_slide_burst(position_value, color, progress, life, rotation_value)
+			_draw_slide_burst(
+				position_value,
+				color,
+				progress,
+				life,
+				rotation_value,
+				int(effect.get("arrow_style", 0)),
+				int(effect.get("star_style", 0))
+			)
 		elif kind == "hold":
 			_draw_hold_burst(position_value, color, progress, life)
 		elif kind == "miss":
@@ -1601,7 +2133,9 @@ func _draw_slide_burst(
 	color: Color,
 	progress: float,
 	life: float,
-	rotation_value: float
+	rotation_value: float,
+	arrow_style: int = 0,
+	star_style: int = 0
 ) -> void:
 	_draw_soft_glow(
 		position_value,
@@ -1611,14 +2145,28 @@ func _draw_slide_burst(
 		3
 	)
 
+	var spikes: int = 5
+	var inner_ratio: float = 0.43
+	match posmod(star_style, TAP_PALETTE.STAR_STYLE_COUNT):
+		1:
+			spikes = 6
+			inner_ratio = 0.54
+		2:
+			spikes = 4
+			inner_ratio = 0.26
+		3:
+			spikes = 8
+			inner_ratio = 0.60
+
 	for layer in range(4):
 		var size: float = radius * (0.105 + float(layer) * 0.030)
 		size *= 0.30 + progress * 1.10
 		var points: PackedVector2Array = _star_points(
 			size,
-			size * 0.43,
+			size * inner_ratio,
 			rotation_value + progress * (1.4 if layer % 2 == 0 else -1.1),
-			position_value
+			position_value,
+			spikes
 		)
 		points.append(points[0])
 		draw_polyline(
@@ -1636,7 +2184,8 @@ func _draw_slide_burst(
 			p,
 			direction,
 			radius * (0.018 + progress * 0.012),
-			Color(color.r, color.g, color.b, life * 0.72)
+			Color(color.r, color.g, color.b, life * 0.72),
+			arrow_style
 		)
 
 
@@ -1870,11 +2419,17 @@ func _star_points(
 	outer_radius: float,
 	inner_radius: float,
 	rotation_value: float,
-	position_value: Vector2
+	position_value: Vector2,
+	spikes: int = 5
 ) -> PackedVector2Array:
+	var point_count: int = maxi(spikes, 3) * 2
 	var points := PackedVector2Array()
-	for index in range(10):
-		var angle: float = rotation_value - PI * 0.5 + PI * float(index) / 5.0
+	for index in range(point_count):
+		var angle: float = (
+			rotation_value
+			- PI * 0.5
+			+ TAU * float(index) / float(point_count)
+		)
 		var point_radius: float = outer_radius if index % 2 == 0 else inner_radius
 		points.append(position_value + Vector2(cos(angle), sin(angle)) * point_radius)
 	return points
