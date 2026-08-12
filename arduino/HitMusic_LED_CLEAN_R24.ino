@@ -758,15 +758,23 @@ void cor_contagem(
   unsigned long decorrido = agora - passo_contagem_inicio_ms;
   uint8_t cabeca = (uint8_t)((decorrido / 72UL) % NUM_TAZOS);
 
-  uint8_t base_r = 40;
-  uint8_t base_g = 220;
+  /*
+    Um segundo para cada cor da mesa: 3 = AZUL, 2 = VERMELHO,
+    1 = AMARELO. Sao os mesmos tres tons dos tazos, entao a contagem
+    ja apresenta a paleta do jogo antes da primeira nota.
+
+    O ramo padrao (numero_contagem 4..9) continua ciano e vale como
+    aquecimento: e o que aparece entre o BLINKALL e o primeiro COUNT.
+  */
+  uint8_t base_r = 0;
+  uint8_t base_g = 219;
   uint8_t base_b = 255;
 
   switch (numero_contagem) {
-    case 3: base_r = 180; base_g = 50;  base_b = 255; break;
-    case 2: base_r = 255; base_g = 150; base_b = 10;  break;
-    case 1: base_r = 255; base_g = 30;  base_b = 20;  break;
-    case 0: base_r = 40;  base_g = 255; base_b = 90;  break;
+    case 3: base_r = 0;   base_g = 219; base_b = 255; break;  /* azul     */
+    case 2: base_r = 255; base_g = 6;   base_b = 14;  break;  /* vermelho */
+    case 1: base_r = 255; base_g = 184; base_b = 0;   break;  /* amarelo  */
+    case 0: base_r = 40;  base_g = 255; base_b = 90;  break;  /* vai!     */
     default: break;
   }
 

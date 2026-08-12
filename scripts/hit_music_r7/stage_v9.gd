@@ -238,7 +238,7 @@ func _show_insert_coin_warning() -> void:
 		var font: Font = _load_font()
 		_insert_coin_label = _make_label(
 			"INSIRA FICHA",
-			int(_radius * 0.058),
+			int(_radius * 0.074),
 			HORIZONTAL_ALIGNMENT_CENTER,
 			font
 		)
@@ -295,7 +295,7 @@ func _build_pre_game_overlay() -> void:
 
 	_pre_game_subtitle = _make_label(
 		"Mesmo ritmo. Cadeias e densidade diferentes.",
-		int(_radius * 0.024),
+		int(_radius * 0.034),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
@@ -328,7 +328,7 @@ func _build_pre_game_overlay() -> void:
 
 	_easy_button_label = _make_label(
 		"FACIL",
-		int(_radius * 0.041),
+		int(_radius * 0.050),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
@@ -345,7 +345,7 @@ func _build_pre_game_overlay() -> void:
 
 	_hard_button_label = _make_label(
 		"DIFICIL",
-		int(_radius * 0.041),
+		int(_radius * 0.050),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
@@ -365,7 +365,7 @@ func _build_pre_game_overlay() -> void:
 
 	_play_button_label = _make_label(
 		"JOGAR",
-		int(_radius * 0.036),
+		int(_radius * 0.046),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
@@ -411,7 +411,7 @@ func _build_center_hud() -> void:
 
 	_center_combo = _make_label(
 		"COMBO 0",
-		int(_radius * 0.038),
+		int(_radius * 0.046),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
@@ -431,7 +431,7 @@ func _build_center_hud() -> void:
 
 	_center_error = _make_label(
 		"ERROS 0.0 / 0.0s",
-		int(_radius * 0.021),
+		int(_radius * 0.030),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
@@ -606,14 +606,13 @@ func _finish_game(failed: bool) -> void:
 
 	if _result_details != null:
 		_result_details.text = (
-			"PARTIDA ATUAL • %s\nACERTOS %d   ERROS %d\nMAX COMBO %d\n%s\n%s"
+			"%s\nACERTOS %d   ERROS %d\nMAX COMBO %d\n%s"
 			% [
 				_player_name,
 				_hits,
 				_misses,
 				_max_combo,
 				_result_qualification_text(),
-				_result_action_hint(),
 			]
 		)
 

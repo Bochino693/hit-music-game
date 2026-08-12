@@ -47,6 +47,12 @@ This refactor keeps the original cabinet flow:
   crossing on a slow cycle. Each universe sets its own swirl and speed.
 - The result modal has its own palette (not the song's), green when the run
   qualifies and red when it does not, with a visible countdown.
+- The 3-2-1 countdown cycles the three table colors, one second each: blue, red,
+  yellow. The game sends `COUNT n` each second (it previously only sent
+  `BLINKALL`, which left the firmware on `numero_contagem = 5` — the default
+  cyan branch, which is why the countdown was always blue). The firmware palette
+  in `cor_contagem` was aligned to the same three colors, and the on-screen
+  number is tinted to match.
 - Song video is shown in the central horizontal rectangle.
 - Each song has its own colors, pattern, BPM, lane sequence, easy chart and hard chart.
 
@@ -95,6 +101,13 @@ notes". Every note lands exactly on a beat subdivision, so the gameplay sits on
 the drums. The song is split into 4-bar phrases and each phrase draws a weighted
 archetype — run, hold break, slide turn, two-hand pair, mixed — with a penalty
 for repeating the previous one, which is what mixes the note types.
+
+Charts are checked for **two-hand playability**: a long gesture (slide or hold)
+blocks every other note for its whole duration plus a recovery beat, counted in
+absolute slots so a gesture that overruns its phrase still protects the next one.
+Simultaneous pairs only use lanes 3–5 apart on the ring, which is what two hands
+can actually reach. Auditing the seven songs before this rule found 91 notes
+landing inside an active gesture; it is now zero.
 
 Easy and hard are genuinely different charts, not the same chart thinned out:
 easy walks in whole beats and only lands on strong beats, hard walks in eighths

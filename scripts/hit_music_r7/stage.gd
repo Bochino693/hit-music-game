@@ -56,6 +56,15 @@ const RESULT_SECONDS: float = 12.0
 ## Cor propria do modal. Ele NAO usa mais a paleta da musica: o painel
 ## precisa se destacar do cenario que acabou de rodar atras dele, senao
 ## um resultado vermelho em cima do carmine (que ja e vermelho) some.
+## Cores da contagem regressiva: um segundo para cada cor da mesa.
+## 3 = azul, 2 = vermelho, 1 = amarelo. As mesmas tres cores dos tazos,
+## entao a contagem ja apresenta a paleta do jogo antes da primeira nota.
+const COUNTDOWN_COLORS: Array[Color] = [
+	TAP_PALETTE.TAP_CYAN,
+	TAP_PALETTE.TAP_RED,
+	TAP_PALETTE.TAP_YELLOW,
+]
+
 const RESULT_BASE_COLOR: Color = Color(0.055, 0.045, 0.135, 1.0)
 const RESULT_PASS_COLOR: Color = Color(0.25, 1.0, 0.62, 1.0)
 const RESULT_FAIL_COLOR: Color = Color(1.0, 0.32, 0.42, 1.0)
@@ -96,6 +105,9 @@ var _result_transitioning: bool = false
 var _song_audio_started: bool = false
 var _song_finish_requested: bool = false
 var _best_score: float = 0.0
+## Ultimo numero ja publicado da contagem, para nao reenviar o mesmo
+## COUNT dezenas de vezes por segundo.
+var _countdown_published: int = -1
 
 var _center: Vector2 = Vector2.ZERO
 var _radius: float = 100.0
@@ -198,6 +210,7 @@ func _process(delta: float) -> void:
 			_update_song_time()
 			var count_value: int = maxi(1, int(ceil(COUNTDOWN_SECONDS - _state_time)))
 			_countdown_label.text = str(count_value)
+			_publish_countdown_step(count_value)
 			if _state_time >= COUNTDOWN_SECONDS:
 				_start_playing()
 		GameState.PLAYING:
@@ -427,27 +440,29 @@ func _build_hud() -> void:
 
 	# Painel reservado somente ao resultado da partida atual.
 	_result_panel = Panel.new()
-	_result_panel.position = _center - Vector2(_radius * 0.62, _radius * 0.62)
-	_result_panel.size = Vector2(_radius * 1.24, _radius * 1.24)
+	# Painel maior: com os textos legiveis (o detalhe passou de 0.028
+	# para 0.042 do raio) o conteudo nao cabia mais na caixa anterior.
+	_result_panel.position = _center - Vector2(_radius * 0.72, _radius * 0.70)
+	_result_panel.size = Vector2(_radius * 1.44, _radius * 1.40)
 	_result_panel.visible = false
 	_result_panel.z_index = 240
 	_result_panel.add_theme_stylebox_override("panel", _result_panel_style())
 	_hud_layer.add_child(_result_panel)
 
-	_result_title = _make_label("TRACK CLEAR", int(_radius * 0.085), HORIZONTAL_ALIGNMENT_CENTER, font)
-	_result_title.position = Vector2(_radius * 0.05, _radius * 0.05)
-	_result_title.size = Vector2(_result_panel.size.x - _radius * 0.10, _radius * 0.14)
+	_result_title = _make_label("TRACK CLEAR", int(_radius * 0.098), HORIZONTAL_ALIGNMENT_CENTER, font)
+	_result_title.position = Vector2(_radius * 0.06, _radius * 0.05)
+	_result_title.size = Vector2(_result_panel.size.x - _radius * 0.12, _radius * 0.16)
 	_result_panel.add_child(_result_title)
 
-	_result_score = _make_label("100.00%", int(_radius * 0.12), HORIZONTAL_ALIGNMENT_CENTER, font)
-	_result_score.position = Vector2(_radius * 0.05, _radius * 0.22)
-	_result_score.size = Vector2(_result_panel.size.x - _radius * 0.10, _radius * 0.18)
+	_result_score = _make_label("100.00%", int(_radius * 0.140), HORIZONTAL_ALIGNMENT_CENTER, font)
+	_result_score.position = Vector2(_radius * 0.06, _radius * 0.235)
+	_result_score.size = Vector2(_result_panel.size.x - _radius * 0.12, _radius * 0.21)
 	_result_score.add_theme_color_override("font_color", _accent_color())
 	_result_panel.add_child(_result_score)
 
-	_result_details = _make_label("", int(_radius * 0.028), HORIZONTAL_ALIGNMENT_CENTER, font)
-	_result_details.position = Vector2(_radius * 0.06, _radius * 0.42)
-	_result_details.size = Vector2(_result_panel.size.x - _radius * 0.12, _radius * 0.26)
+	_result_details = _make_label("", int(_radius * 0.042), HORIZONTAL_ALIGNMENT_CENTER, font)
+	_result_details.position = Vector2(_radius * 0.07, _radius * 0.475)
+	_result_details.size = Vector2(_result_panel.size.x - _radius * 0.14, _radius * 0.30)
 	_result_details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_result_details.clip_text = true
 	_result_panel.add_child(_result_details)
@@ -459,19 +474,19 @@ func _build_hud() -> void:
 ## painel, com area de toque propria — antes o modal era so texto e
 ## qualquer clique na tela disparava a mesma acao.
 func _build_result_actions(font: Font) -> void:
-	var margin: float = _radius * 0.07
+	var margin: float = _radius * 0.08
 	var width: float = _result_panel.size.x - margin * 2.0
-	var button_height: float = _radius * 0.115
+	var button_height: float = _radius * 0.140
 
 	_result_primary_button = Panel.new()
-	_result_primary_button.position = Vector2(margin, _radius * 0.70)
+	_result_primary_button.position = Vector2(margin, _radius * 0.815)
 	_result_primary_button.size = Vector2(width, button_height)
 	_result_primary_button.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_result_panel.add_child(_result_primary_button)
 
 	_result_primary_label = _make_label(
 		"CONTINUAR",
-		int(_radius * 0.042),
+		int(_radius * 0.054),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
@@ -480,14 +495,14 @@ func _build_result_actions(font: Font) -> void:
 	_result_primary_button.add_child(_result_primary_label)
 
 	_result_secondary_button = Panel.new()
-	_result_secondary_button.position = Vector2(margin, _radius * 0.70 + button_height + _radius * 0.035)
+	_result_secondary_button.position = Vector2(margin, _radius * 0.815 + button_height + _radius * 0.040)
 	_result_secondary_button.size = Vector2(width, button_height)
 	_result_secondary_button.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_result_panel.add_child(_result_secondary_button)
 
 	_result_secondary_label = _make_label(
 		"ESCOLHER OUTRA MUSICA",
-		int(_radius * 0.034),
+		int(_radius * 0.046),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
@@ -497,12 +512,12 @@ func _build_result_actions(font: Font) -> void:
 
 	_result_timer_label = _make_label(
 		"",
-		int(_radius * 0.036),
+		int(_radius * 0.050),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
-	_result_timer_label.position = Vector2(margin, _result_panel.size.y - _radius * 0.115)
-	_result_timer_label.size = Vector2(width, _radius * 0.075)
+	_result_timer_label.position = Vector2(margin, _result_panel.size.y - _radius * 0.135)
+	_result_timer_label.size = Vector2(width, _radius * 0.095)
 	_result_panel.add_child(_result_timer_label)
 
 
@@ -701,12 +716,43 @@ func _start_countdown() -> void:
 	_set_gameplay_hud_visible(false)
 	_countdown_label.visible = true
 	_countdown_label.text = "3"
+	_countdown_published = -1
+	_countdown_label.add_theme_color_override("font_color", _countdown_color(3))
+
+
+## Publica o numero da contagem e pinta o passo com a cor da vez.
+##
+## O jogo mandava so BLINKALL e nunca o COUNT, entao o firmware ficava
+## com numero_contagem = 5, que cai no ramo padrao de cor_contagem — o
+## ciano. Por isso a contagem era sempre azul. Enviando o numero, cada
+## segundo assume a sua cor.
+func _publish_countdown_step(count_value: int) -> void:
+	if count_value == _countdown_published:
+		return
+	_countdown_published = count_value
+	LED_CLIENT.countdown_value(count_value)
+
+	if _countdown_label != null and is_instance_valid(_countdown_label):
+		_countdown_label.add_theme_color_override(
+			"font_color",
+			_countdown_color(count_value)
+		)
+
+
+## 3 = azul, 2 = vermelho, 1 = amarelo. Numeros fora dessa faixa caem na
+## primeira cor, entao uma contagem mais longa comeca do azul de novo.
+func _countdown_color(count_value: int) -> Color:
+	var index: int = COUNTDOWN_COLORS.size() - count_value
+	if index < 0 or index >= COUNTDOWN_COLORS.size():
+		return COUNTDOWN_COLORS[0]
+	return COUNTDOWN_COLORS[index]
 
 
 func _start_playing() -> void:
 	_state = GameState.PLAYING
 	_state_time = 0.0
 	_countdown_label.visible = false
+	_countdown_published = -1
 	_set_gameplay_hud_visible(true)
 
 
@@ -1483,8 +1529,10 @@ func _finish_game(failed: bool) -> void:
 	_result_title.text = "CLASSIFICADO" if score >= RESULT_PASS_PERCENT else "NÃO CLASSIFICADO"
 	_result_score.text = "%.2f%%" % score
 	_result_score.add_theme_color_override("font_color", _result_accent_color())
+	# Sem a linha de "o que fazer": os proprios botoes ja dizem. Com uma
+	# linha a menos, as que sobram cabem no tamanho legivel.
 	_result_details.text = (
-		"PARTIDA ATUAL\nACERTOS %d   ERROS %d\nMAX COMBO %d\n%s\n%s"
+		"ACERTOS %d   ERROS %d\nMAX COMBO %d\n%s\n%s"
 		% [_hits, _misses, _max_combo, _result_qualification_text(), _result_action_hint()]
 	)
 	_save_record(score)
@@ -1601,14 +1649,14 @@ func _apply_result_theme() -> void:
 	_fit_label_to_width(
 		_result_primary_label,
 		_result_primary_button.size.x * 0.92,
-		int(_radius * 0.042),
-		int(_radius * 0.022)
+		int(_radius * 0.054),
+		int(_radius * 0.036)
 	)
 	_fit_label_to_width(
 		_result_secondary_label,
 		_result_secondary_button.size.x * 0.92,
-		int(_radius * 0.034),
-		int(_radius * 0.020)
+		int(_radius * 0.046),
+		int(_radius * 0.032)
 	)
 
 

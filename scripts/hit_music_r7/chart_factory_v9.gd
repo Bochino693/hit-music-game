@@ -53,7 +53,12 @@ static func build(song: Dictionary, difficulty_name: String, duration: float) ->
 
 	var slide_beats: float = maxf(float(profile.get("slide_beats", 3.0)), 1.0)
 	var hold_beats: float = maxf(float(profile.get("hold_beats", 3.0)), 1.0)
-	var double_distance: int = clampi(int(profile.get("double_distance", 4)), 1, 7)
+	# DUAS MAOS: o par simultaneo so e tocavel se as duas lanes estiverem
+	# em lados opostos da mesa. Distancia 1 ou 2 pede as duas maos no
+	# mesmo canto (ou dois dedos da mesma mao) e vira uma jogada
+	# desconfortavel; 7 e o mesmo que 1 no sentido contrario. A faixa
+	# util num anel de 8 botoes e 3..5.
+	var double_distance: int = clampi(int(profile.get("double_distance", 4)), 3, 5)
 
 	# Densidade herdada do JSON (slide_every/hold_every continuam
 	# valendo como ajuste do operador): vira a chance de uma frase
@@ -80,6 +85,22 @@ static func build(song: Dictionary, difficulty_name: String, duration: float) ->
 	# de uma vez a partir do inicio da frase e a grade nunca escorrega.
 	var slots_per_bar_int: int = maxi(int(round(BEATS_PER_BAR / grid_beats)), 1)
 	var slots_in_phrase: int = slots_per_bar_int * bars_per_phrase
+
+	# DUAS MAOS: um gesto longo (arrasto ou hold) ocupa o jogador do
+	# inicio ao fim. Nada mais pode ser exigido nessa janela, senao a
+	# fase pede uma terceira mao — impossivel de tocar, nao dificil.
+	#
+	# O bloqueio e contado em SLOT ABSOLUTO (frase * slots + slot), e nao
+	# por frase: um gesto que comeca no ultimo compasso passa do fim da
+	# frase, e a contagem por frase deixava as notas da frase SEGUINTE
+	# caindo em cima dele. Era exatamente o "tap enquanto tenho que fazer
+	# o arrasto".
+	#
+	# Depois do gesto ainda entra um respiro para a mao voltar: mais
+	# largo no facil, curto no dificil (que e onde a pressao deve estar).
+	var recovery_beats: float = 0.5 if hard else 1.0
+	var recovery_slots: int = maxi(int(round(recovery_beats / grid_beats)), 1)
+	var busy_until_slot: int = -1
 
 	while true:
 		var phrase_start: float = start_time + bar * float(bars_per_phrase * phrase_index)
@@ -109,6 +130,13 @@ static func build(song: Dictionary, difficulty_name: String, duration: float) ->
 
 		var slot: int = 0
 		while slot < slots_in_phrase:
+			var absolute_slot: int = phrase_index * slots_in_phrase + slot
+
+			# Janela de um gesto em andamento: nada e cobrado do jogador.
+			if absolute_slot < busy_until_slot:
+				slot += 1
+				continue
+
 			var beats_in_phrase: float = float(slot) * grid_beats
 			var slot_time: float = phrase_start + beat * beats_in_phrase
 			if slot_time >= end_time:
@@ -150,9 +178,15 @@ static func build(song: Dictionary, difficulty_name: String, duration: float) ->
 						slide_index += 1
 						note_index += 1
 						special_done = true
-						# O arrasto ocupa varias batidas: pula os slots
-						# dele para nao empilhar tap por cima do gesto.
-						slot += maxi(int(ceil(slide_beats / grid_beats)), 1)
+						# O arrasto ocupa varias batidas mais o respiro.
+						# O bloqueio e absoluto, entao vale tambem para a
+						# frase seguinte quando o gesto passa do compasso.
+						var slide_slots: int = maxi(
+							int(ceil(slide_beats / grid_beats)),
+							1
+						)
+						busy_until_slot = absolute_slot + slide_slots + recovery_slots
+						slot += slide_slots
 						continue
 
 			if wants_special and _archetype_uses_hold(archetype):
@@ -166,7 +200,9 @@ static func build(song: Dictionary, difficulty_name: String, duration: float) ->
 				})
 				note_index += 1
 				special_done = true
-				slot += maxi(int(ceil(hold_beats / grid_beats)), 1)
+				var hold_slots: int = maxi(int(ceil(hold_beats / grid_beats)), 1)
+				busy_until_slot = absolute_slot + hold_slots + recovery_slots
+				slot += hold_slots
 				continue
 
 			events.append({
