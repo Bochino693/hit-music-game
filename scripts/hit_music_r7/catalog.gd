@@ -1,6 +1,7 @@
 extends RefCounted
 
 const CATALOG_PATH: String = "res://data/hit_music_songs.json"
+const RHYTHM: Script = preload("res://scripts/hit_music_r7/rhythm_profile.gd")
 
 static func all_songs() -> Array:
 	var file := FileAccess.open(CATALOG_PATH, FileAccess.READ)
@@ -35,12 +36,12 @@ static func get_song(song_id: String) -> Dictionary:
 	return {}
 
 
+## Perfil da dificuldade. Nasce derivado do BPM (rhythm_profile.gd) e
+## recebe por cima o que a musica tiver ajustado no JSON. Uma tela nova
+## que so informe o bpm ja sai com aproximacao, janelas de acerto e
+## densidade coerentes com o proprio andamento.
 static func get_difficulty(song: Dictionary, difficulty_name: String) -> Dictionary:
-	var key: String = "hard" if difficulty_name.to_lower() == "hard" else "easy"
-	var value: Variant = song.get(key, {})
-	if value is Dictionary:
-		return (value as Dictionary).duplicate(true)
-	return {}
+	return RHYTHM.build(song, difficulty_name)
 
 
 static func _prepare_colors(song: Dictionary) -> void:

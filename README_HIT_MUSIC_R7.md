@@ -16,7 +16,10 @@ This refactor keeps the original cabinet flow:
 - Eight fixed white lane markers.
 - No stationary tazo at the target.
 - The tazo entity is used only by moving TAP notes.
-- HOLD notes are thick yellow hollow capsules.
+- HOLD notes are a thin yellow energy ribbon with a draining core and
+  travelling pulses. In the last 0.16 s the ribbon retracts into the target
+  and the burst picks it up from there, so there is no visual jump between
+  note and effect.
 - SLIDE notes use chevrons and a star drawn in the note's own tazo color
   (cyan/yellow/red). Four arrow silhouettes and four star silhouettes rotate
   between slides; the color never changes family, only the shape does.
@@ -32,6 +35,11 @@ This refactor keeps the original cabinet flow:
   no overlays stacked on top of each other.
 - The record sits in its own badge in the top-right corner of the HUD panel,
   auto-fitted so it never overlaps or truncates.
+- Ambient dust is a parallax star field: particles are born near the middle,
+  accelerate outward, grow and brighten, then fade at the rim, with two comets
+  crossing on a slow cycle. Each universe sets its own swirl and speed.
+- The result modal has its own palette (not the song's), green when the run
+  qualifies and red when it does not, with a visible countdown.
 - Song video is shown in the central horizontal rectangle.
 - Each song has its own colors, pattern, BPM, lane sequence, easy chart and hard chart.
 
@@ -50,12 +58,41 @@ Gameplay:
   corridor — jumping from start to end does not complete the note).
 - SLIDE on the cabinet: press the path lanes in order. The LED lights only the
   next lane of the path, so the drag is playable without a touch screen.
-- Result: START replays, B returns to selector.
+- Result modal: START (or a tap) takes the highlighted action, B opens the song
+  selector. When the countdown runs out with nothing chosen, the game returns to
+  the opening screen.
+  - Free mode: continue to the next song (retry when the run failed), or pick
+    another song.
+  - Credit mode: both options require a credit and consume one; with no credit
+    the buttons are hidden and the countdown goes straight to the opening.
 
-Every song generates slides on both difficulties (`slide_every` is 6–10 in all
-profiles, and every pack ships `slides_easy`/`slides_hard`). A 90 s track
-produces roughly 9–13 slides on easy and 29–49 on hard, all crossing the
-inside of the circle between lane markers.
+The down button in the menus is `input_e` (physical lane 4). It is defined once,
+in `led_client.gd` (`NAV_DOWN_ACTION` / `NAV_DOWN_LANE`), and the song selector,
+the difficulty screen and their LEDs all read from there.
+
+Every song generates slides on both difficulties. `slide_every` / `hold_every`
+from the JSON now act as *weights* in the phrase draw rather than a fixed
+cadence, so a 110 s track lands roughly 4–7 slides and 3–7 holds per difficulty,
+spread across the song instead of clustered on a fixed interval. All slide paths
+cross the inside of the circle between lane markers.
+
+## Charts
+
+`rhythm_profile.gd` derives everything about how a song plays from its BPM:
+approach speed, hit windows, note density, lane sequence and slide shapes.
+Anything present in the JSON overrides the derived value, so tuning by hand
+still works.
+
+`chart_factory_v9.gd` builds the chart in **bars**, not in "one event every N
+notes". Every note lands exactly on a beat subdivision, so the gameplay sits on
+the drums. The song is split into 4-bar phrases and each phrase draws a weighted
+archetype — run, hold break, slide turn, two-hand pair, mixed — with a penalty
+for repeating the previous one, which is what mixes the note types.
+
+Easy and hard are genuinely different charts, not the same chart thinned out:
+easy walks in whole beats and only lands on strong beats, hard walks in eighths
+and uses offbeats and syncopation. They also use different lane steps (3 vs 5,
+both coprime with 8, so all eight buttons are used) and separate RNG seeds.
 
 ## Song catalog
 
@@ -88,6 +125,13 @@ Each pack defines:
 - slide path patterns
 
 ## Adding another song
+
+A new screen only needs `id`, `title`, `audio`, `video`, `cover` and `bpm`.
+Everything else — the easy and hard profiles, the lane pattern and the slide
+shapes — is derived from the BPM, so the song arrives with a rhythm of its own.
+Add `easy` / `hard` blocks to the JSON only when you want to override something.
+
+### Script helper
 
 Run from the project root:
 

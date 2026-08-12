@@ -20,6 +20,12 @@ var _hit_energy: float = 0.0
 var _combo_energy: float = 0.0
 var _hit_color: Color = Color.WHITE
 var _hit_color_energy: float = 0.0
+## Versao suavizada de _hit_color_energy. O valor bruto salta de 0 para
+## 1 no mesmo quadro do acerto e, como o cenario inteiro e tingido por
+## ele, essa troca instantanea aparecia como um "pisca" — bem visivel
+## no fim do hold, que e quando o jogador esta parado olhando a nota.
+## Aqui a subida leva ~0.1s e a descida acompanha o decaimento.
+var _hit_color_smooth: float = 0.0
 
 # Nove ceus reutilizaveis. Os sete cenarios atuais recebem estilos
 # exclusivos; os outros dois ficam prontos para novas musicas.
@@ -212,6 +218,9 @@ func _process(delta: float) -> void:
 	_hit_energy = move_toward(_hit_energy, 0.0, delta * 2.65)
 	_combo_energy = move_toward(_combo_energy, 0.0, delta * 0.16)
 	_hit_color_energy = move_toward(_hit_color_energy, 0.0, delta * 1.10)
+	# Sobe rapido mas nao instantaneo (~0.1s ate o topo) e desce junto
+	# com o valor bruto: e o que tira o pisca do fundo no acerto.
+	_hit_color_smooth = move_toward(_hit_color_smooth, _hit_color_energy, delta * 9.0)
 
 	var lane_flash_active: bool = false
 	for lane in range(_lane_flash_energy.size()):
@@ -541,7 +550,7 @@ func _draw_universe() -> void:
 
 	# Enquanto o burst do acerto esta vivo, o cenario inteiro assume a
 	# cor do tazo acertado e volta suavemente para a paleta da musica.
-	var hit_mix: float = clampf(_hit_color_energy * 4.0, 0.0, 1.0)
+	var hit_mix: float = clampf(_hit_color_smooth * 4.0, 0.0, 1.0)
 	var primary: Color = _primary().lerp(_hit_color, hit_mix)
 	var secondary: Color = _secondary().lerp(_hit_color, hit_mix)
 	var accent: Color = _accent().lerp(_hit_color, hit_mix)
@@ -570,13 +579,13 @@ func _draw_universe() -> void:
 ## Clarao central na cor do tazo acertado. E a unica camada comum a
 ## todos os universos, porque nao e decoracao: e a resposta do acerto.
 func _draw_hit_bloom() -> void:
-	if _hit_color_energy <= 0.015:
+	if _hit_color_smooth <= 0.015:
 		return
 	_draw_soft_glow(
 		center,
-		radius * (0.26 + _hit_color_energy * 0.20),
+		radius * (0.26 + _hit_color_smooth * 0.20),
 		_hit_color,
-		_hit_color_energy * 0.26,
+		_hit_color_smooth * 0.26,
 		3
 	)
 
@@ -1108,91 +1117,183 @@ func _draw_universe_prism_field(
 ## Poeira ambiente com movimento proprio de cada universo: orbital,
 ## ascendente, lateral ou em queda. Assim nem a camada de particulas
 ## fica igual entre duas telas.
+## POEIRA ESPACIAL
+##
+## Antes eram 18 bolinhas em orbita fixa: cada uma girava para sempre no
+## mesmo raio, com o mesmo tamanho e o mesmo brilho. Lia como "bolinhas
+## dando volta", nao como espaco.
+##
+## Agora cada particula tem CICLO DE VIDA e PROFUNDIDADE. Ela nasce
+## perto do centro, acelera para fora, cresce e clareia conforme se
+## aproxima, e desvanece na borda — a leitura e a de estar atravessando
+## um campo de estrelas. Tres camadas de paralaxe se movem em
+## velocidades diferentes (as do fundo quase paradas, as da frente
+## rapidas e riscadas), que e o que da a sensacao de volume.
+##
+## Cada universo escolhe o quanto a poeira espirala e o quanto ela
+## corre, entao a mesma tecnica entrega leituras diferentes: a aura do
+## dragon ball cospe faisca, a espiral do naruto arrasta tudo em
+## redemoinho, o favo do soul quase nao se mexe.
+const DUST_COUNT: int = 30
+const COMET_COUNT: int = 2
+
+
+## Ruido deterministico 0..1. Sem RandomNumberGenerator por quadro: a
+## mesma particula fica sempre igual entre um quadro e o proximo.
+func _hash01(value: float) -> float:
+	return fposmod(absf(sin(value) * 43758.5453), 1.0)
+
+
+## x = quanto a poeira espirala, y = velocidade do ciclo de vida.
+func _dust_settings() -> Vector2:
+	match _universe_style():
+		"ki_aura":
+			return Vector2(0.30, 0.34)
+		"spiral_seal":
+			return Vector2(1.35, 0.17)
+		"portal_lab":
+			return Vector2(0.62, 0.26)
+		"breath_waves":
+			return Vector2(0.14, 0.13)
+		"moon_hive":
+			return Vector2(0.08, 0.11)
+		"rune_swarm":
+			return Vector2(0.80, 0.15)
+		"blade_shards":
+			return Vector2(0.22, 0.29)
+		_:
+			return Vector2(0.42, 0.20)
+
+
 func _draw_ambient_particles() -> void:
 	var time_value: float = _idle_time()
 	var beat: float = _beat_pulse()
+	var settings: Vector2 = _dust_settings()
+	var swirl: float = settings.x
+	var speed: float = settings.y
+	var limit: float = _universe_radius()
 	var palette: Array[Color] = [_primary(), _secondary(), _accent()]
-	var style: String = _universe_style()
 
-	for index in range(18):
-		var seed_value: float = float(index) * 12.9898
-		var depth: float = 0.35 + float(index % 3) * 0.27
-		var base_angle: float = fposmod(absf(sin(seed_value) * 43758.5453), TAU)
-		var orbit: float = radius * (0.24 + fposmod(absf(cos(seed_value * 0.73)) * 9.7, 0.58))
+	for index in range(DUST_COUNT):
+		var seed_value: float = float(index) * 12.9898 + 4.13
+		var phase: float = _hash01(seed_value * 1.7)
+		var depth: float = 0.24 + _hash01(seed_value * 3.1) * 0.76
 		var direction_sign: float = -1.0 if index % 2 == 0 else 1.0
-		var angular_speed: float = (0.018 + depth * 0.022) * direction_sign
-		var angle: float = base_angle + time_value * angular_speed
-		var drift: float = sin(time_value * (0.32 + depth * 0.16) + seed_value) * radius * 0.012
 
-		var particle_position: Vector2 = center + Vector2(cos(angle), sin(angle)) * (orbit + drift)
-		var trail_angle: float = angle - angular_speed * 0.24
-		var trail_position: Vector2 = center + Vector2(cos(trail_angle), sin(trail_angle)) * (orbit + drift)
+		# Camada de tras vive mais devagar; a da frente atravessa rapido.
+		var life_speed: float = speed * (0.42 + depth * 1.05)
+		var life: float = fposmod(time_value * life_speed + phase, 1.0)
 
-		match style:
-			"ki_aura", "spiral_seal":
-				# Faiscas subindo: o eixo vertical domina.
-				var rise: float = fposmod(time_value * (0.10 + depth * 0.08) + seed_value * 0.11, 1.0)
-				var lateral: float = sin(seed_value + time_value * 0.5) * radius * 0.42
-				particle_position = center + Vector2(
-					lateral,
-					_universe_radius() * (0.80 - rise * 1.60)
-				)
-				trail_position = particle_position + Vector2(0.0, radius * 0.030)
-			"breath_waves", "portal_lab":
-				# Deriva lateral continua, acompanhando a leitura linear.
-				var slide: float = fposmod(time_value * (0.09 + depth * 0.05) + seed_value * 0.13, 1.0)
-				var height: float = sin(seed_value * 1.7) * _universe_radius() * 0.52
-				particle_position = center + Vector2(
-					_universe_radius() * (slide * 1.60 - 0.80) * direction_sign,
-					height + sin(time_value + seed_value) * radius * 0.020
-				)
-				trail_position = particle_position - Vector2(radius * 0.030 * direction_sign, 0.0)
-			"moon_hive":
-				# Cinzas caindo devagar.
-				var fall: float = fposmod(time_value * (0.07 + depth * 0.05) + seed_value * 0.17, 1.0)
-				var column: float = sin(seed_value * 2.3) * _universe_radius() * 0.50
-				particle_position = center + Vector2(
-					column + sin(time_value * 0.6 + seed_value) * radius * 0.020,
-					_universe_radius() * (fall * 1.60 - 0.80)
-				)
-				trail_position = particle_position - Vector2(0.0, radius * 0.030)
-			_:
-				pass
+		# O avanco e acelerado (expoente > 1): perto do centro a
+		# particula quase nao anda e, chegando na borda, dispara. E esse
+		# ganho de velocidade que o olho le como profundidade.
+		var travel: float = pow(life, 1.30)
+		var previous_travel: float = pow(maxf(life - 0.035, 0.0), 1.30)
 
-		if particle_position.distance_to(center) > _universe_radius():
+		var base_angle: float = _hash01(seed_value * 2.3) * TAU
+		var angle: float = base_angle + travel * swirl * direction_sign
+		var previous_angle: float = base_angle + previous_travel * swirl * direction_sign
+
+		var distance_value: float = limit * (0.05 + travel * 0.95)
+		var previous_distance: float = limit * (0.05 + previous_travel * 0.95)
+		if distance_value > limit:
 			continue
 
-		var particle_color: Color = palette[index % palette.size()]
-		var twinkle: float = 0.5 + 0.5 * sin(time_value * (1.2 + depth) + seed_value)
-		var size: float = radius * (0.0026 + depth * 0.0026 + beat * 0.0010)
+		var position_value: Vector2 = center + Vector2(cos(angle), sin(angle)) * distance_value
+		var trail_position: Vector2 = (
+			center + Vector2(cos(previous_angle), sin(previous_angle)) * previous_distance
+		)
+
+		# Nasce e morre suave: nada aparece ou some de estalo.
+		var fade: float = sin(PI * clampf(life, 0.0, 1.0))
+		var twinkle: float = 0.5 + 0.5 * sin(time_value * (1.3 + depth * 2.4) + seed_value)
+		var size: float = radius * (0.0013 + depth * 0.0030) * (0.55 + travel * 0.85)
+		size += radius * beat * 0.0007 * depth
+
+		# Longe = mais frio e apagado, perto = na cor do cenario e vivo.
+		var particle_color: Color = palette[index % palette.size()].lerp(
+			Color(0.72, 0.80, 1.0, 1.0),
+			1.0 - depth
+		)
+		var alpha: float = fade * (0.20 + depth * 0.66)
 
 		draw_line(
 			trail_position,
-			particle_position,
-			Color(particle_color.r, particle_color.g, particle_color.b, 0.10 + twinkle * 0.12),
-			maxf(1.0, size * 0.9),
-			true
-		)
-		_draw_soft_glow(
-			particle_position,
-			size * 3.1,
-			particle_color,
-			0.055 + twinkle * 0.075,
-			2
-		)
-		draw_circle(
-			particle_position,
-			size * 0.85,
-			Color(particle_color.r, particle_color.g, particle_color.b, 0.35 + twinkle * 0.45),
-			true
-		)
-		draw_circle(
-			particle_position,
-			size * 0.30,
-			Color(1.0, 1.0, 1.0, 0.25 + twinkle * 0.35),
+			position_value,
+			Color(particle_color.r, particle_color.g, particle_color.b, alpha * 0.45),
+			maxf(1.0, size * 0.80),
 			true
 		)
 
+		# Halo so nas particulas da frente: nas do fundo ele nao apareceria
+		# e custaria tres circulos preenchidos por quadro a toa.
+		if depth > 0.62:
+			_draw_soft_glow(
+				position_value,
+				size * 3.4,
+				particle_color,
+				alpha * (0.30 + twinkle * 0.28),
+				2
+			)
+
+		draw_circle(
+			position_value,
+			maxf(1.0, size),
+			Color(particle_color.r, particle_color.g, particle_color.b, alpha * (0.55 + twinkle * 0.45)),
+			true
+		)
+		if depth > 0.50:
+			draw_circle(
+				position_value,
+				maxf(1.0, size * 0.42),
+				Color(1.0, 1.0, 1.0, alpha * (0.40 + twinkle * 0.50)),
+				true
+			)
+
+	_draw_comets(time_value, limit)
+
+
+## Duas riscas longas atravessando o campo de tempos em tempos. Sao o
+## detalhe que tira a leitura de "campo uniforme" e faz a tela parecer
+## viva sem custar quase nada (duas linhas por quadro).
+func _draw_comets(time_value: float, limit: float) -> void:
+	var accent: Color = _accent()
+	for index in range(COMET_COUNT):
+		var seed_value: float = float(index) * 31.7 + 9.1
+		var cycle: float = fposmod(time_value * 0.085 + _hash01(seed_value), 1.0)
+		# Fica invisivel a maior parte do ciclo: o cometa e evento, nao
+		# elemento permanente.
+		if cycle > 0.32:
+			continue
+
+		var progress: float = cycle / 0.32
+		var entry_angle: float = _hash01(seed_value * 2.9) * TAU
+		var sweep: float = 0.9 + _hash01(seed_value * 5.3) * 0.7
+		var direction_sign: float = -1.0 if index % 2 == 0 else 1.0
+
+		var start_point: Vector2 = center + Vector2(cos(entry_angle), sin(entry_angle)) * limit
+		var exit_angle: float = entry_angle + PI * sweep * direction_sign
+		var end_point: Vector2 = center + Vector2(cos(exit_angle), sin(exit_angle)) * limit
+
+		var head: Vector2 = start_point.lerp(end_point, progress)
+		var tail: Vector2 = start_point.lerp(end_point, maxf(progress - 0.14, 0.0))
+		var fade: float = sin(PI * progress)
+
+		draw_line(
+			tail,
+			head,
+			Color(accent.r, accent.g, accent.b, fade * 0.30),
+			maxf(1.0, radius * 0.0030),
+			true
+		)
+		draw_line(
+			tail.lerp(head, 0.55),
+			head,
+			Color(1.0, 1.0, 1.0, fade * 0.62),
+			maxf(1.0, radius * 0.0018),
+			true
+		)
+		draw_circle(head, maxf(1.0, radius * 0.0030), Color(1.0, 1.0, 1.0, fade * 0.85), true)
 
 func _draw_ring() -> void:
 	var ring_radius: float = radius * 0.905
@@ -1385,6 +1486,22 @@ func _draw_lane_energy() -> void:
 		)
 
 
+## HOLD — fita fina de energia.
+##
+## A versao anterior era uma barra grossa com cinco linhas empilhadas,
+## chevrons e trilhos tracejados: pesada de ler e sem movimento proprio.
+## Agora e um feixe fino com nucleo brilhante, um preenchimento que
+## DRENA conforme o tempo passa (o quanto falta da nota fica obvio pelo
+## proprio comprimento aceso) e pulsos curtos correndo em direcao ao
+## alvo. A cauda desvanece em vez de terminar num disco.
+##
+## Nos ultimos instantes a fita ja comeca a recolher para dentro do
+## alvo (_hold_release_ratio), entao quando o estouro entra ele nasce
+## exatamente de onde a fita terminou — nao existe mais o salto de
+## "barra cheia some / explosao aparece" que dava sensacao de travada.
+const HOLD_RELEASE_SECONDS: float = 0.16
+
+
 func _draw_hold(event: Dictionary) -> void:
 	if not bool(event.get("_spawned", false)):
 		return
@@ -1412,151 +1529,165 @@ func _draw_hold(event: Dictionary) -> void:
 		)
 		head = target
 
-	var remaining: float = 1.0 - hold_progress
-	var length: float = radius * (0.52 if song_time < hit_time else maxf(0.085, 0.52 * remaining))
+	var length: float = radius * 0.52
+	if song_time >= hit_time:
+		length = radius * maxf(0.06, 0.52 * (1.0 - hold_progress))
+
+	# Recolhimento final: nos ultimos milissegundos a fita encolhe para
+	# dentro do alvo, entregando a cena ao estouro sem corte seco.
+	var release: float = _hold_release_ratio(end_time)
+	length *= 1.0 - release
+
 	var tail: Vector2 = head - direction * length
-	# Hold fino: aproximadamente metade da espessura da R11/R12 inicial.
-	var width: float = radius * 0.050 * float(difficulty.get("hold_width", 1.0))
-	var color: Color = TAP_PALETTE.HOLD_YELLOW
+	var width: float = radius * 0.030 * float(difficulty.get("hold_width", 1.0))
 	var holding: bool = bool(event.get("_holding", false))
-	if holding:
-		color = color.lerp(Color.WHITE, 0.16)
 
-	_draw_capsule(tail, head, width, color, holding, hold_progress)
+	_draw_hold_ribbon(
+		tail,
+		head,
+		width,
+		TAP_PALETTE.HOLD_YELLOW,
+		holding,
+		hold_progress,
+		1.0 - release
+	)
 
 
-func _draw_capsule(
+## 0 enquanto falta tempo, subindo ate 1 no instante em que a nota
+## termina. E o que costura a fita ao estouro.
+func _hold_release_ratio(end_time: float) -> float:
+	var remaining: float = end_time - song_time
+	if remaining >= HOLD_RELEASE_SECONDS:
+		return 0.0
+	return clampf(1.0 - remaining / HOLD_RELEASE_SECONDS, 0.0, 1.0)
+
+
+func _draw_hold_ribbon(
 	tail: Vector2,
 	head: Vector2,
 	half_width: float,
 	color: Color,
 	active: bool,
-	progress: float
+	progress: float,
+	fade: float
 ) -> void:
-	# Fita de hold inspirada na leitura de arcades circulares: uma forma unica,
-	# larga e direcional. Brilho e movimento confirmam o estado pressionado.
-	var direction: Vector2 = (head - tail).normalized()
-	var normal: Vector2 = Vector2(-direction.y, direction.x)
+	if fade <= 0.02:
+		return
+
 	var length: float = tail.distance_to(head)
-	var pulse: float = 0.5 + 0.5 * sin(_idle_time() * (10.0 if active else 4.0))
-	var glow_alpha: float = 0.26 if active else 0.12
+	if length <= 0.5:
+		return
 
+	var direction: Vector2 = (head - tail) / length
+	var normal := Vector2(-direction.y, direction.x)
+	var pulse: float = 0.5 + 0.5 * sin(_idle_time() * (7.5 if active else 3.2))
+	var highlight: Color = TAP_PALETTE.highlight(color)
+
+	# Halo largo e suave em vez de contorno grosso: da presenca sem
+	# engordar a forma.
 	draw_line(
 		tail,
 		head,
-		Color(color.r, color.g, color.b, glow_alpha),
-		half_width * (2.65 + pulse * 0.16),
+		Color(color.r, color.g, color.b, (0.16 if active else 0.09) * fade),
+		half_width * (3.4 + pulse * 0.4),
 		true
 	)
+	# Corpo fino.
 	draw_line(
 		tail,
 		head,
-		Color(0.006, 0.010, 0.022, 0.92),
-		half_width * 1.82,
+		Color(color.r, color.g, color.b, (0.62 if active else 0.40) * fade),
+		half_width * 1.55,
 		true
 	)
+	# Nucleo claro, bem estreito — e o que da a leitura "nitida".
 	draw_line(
 		tail,
 		head,
-		Color(color.r, color.g, color.b, 0.78 if active else 0.54),
-		half_width * 1.34,
-		true
-	)
-	draw_line(
-		tail + normal * half_width * 0.72,
-		head + normal * half_width * 0.72,
-		Color.WHITE,
-		maxf(2.0, half_width * 0.13),
-		true
-	)
-	draw_line(
-		tail - normal * half_width * 0.72,
-		head - normal * half_width * 0.72,
-		Color(color.r, color.g, color.b, 0.92),
-		maxf(2.0, half_width * 0.13),
+		Color(highlight.r, highlight.g, highlight.b, (0.95 if active else 0.62) * fade),
+		maxf(1.5, half_width * 0.52),
 		true
 	)
 
-	# Chevrons deslizantes no lugar de barras retas: alem de marcar o
-	# ritmo, apontam pro alvo, deixando a direcao do hold obvia. Sao
-	# poucos e desenhados como duas linhas (nao poligono), pra manter
-	# barato mesmo com varios holds na tela.
-	var marker_count: int = clampi(int(length / maxf(half_width * 3.1, 1.0)), 3, 7)
-	var phase: float = fmod(_idle_time() * (1.7 if active else 0.75), 1.0)
-	var wing: float = half_width * 0.46
-	for index in range(marker_count):
-		var marker_t: float = fmod((float(index) + phase) / float(marker_count), 1.0)
-		var marker_position: Vector2 = tail.lerp(head, marker_t)
-		var marker_alpha: float = (0.88 if active else 0.44) * smoothstep(0.0, 0.12, marker_t)
-		var tip: Vector2 = marker_position + direction * wing * 0.85
-		var marker_color := Color(1.0, 1.0, 1.0, marker_alpha)
-		var marker_width: float = maxf(1.5, half_width * 0.11)
-		draw_line(marker_position - normal * wing, tip, marker_color, marker_width, true)
-		draw_line(marker_position + normal * wing, tip, marker_color, marker_width, true)
-
-	# Trilhos laterais tracejados dao textura de "fita" ao hold.
-	var rail_count: int = clampi(marker_count * 2, 6, 14)
-	var rail_alpha: float = 0.30 if active else 0.16
-	for index in range(rail_count):
-		var rail_t: float = (float(index) + 0.5) / float(rail_count)
-		var rail_center: Vector2 = tail.lerp(head, rail_t)
-		var rail_half: Vector2 = direction * (length / float(rail_count)) * 0.26
-		for side in [-1.0, 1.0]:
-			var offset: Vector2 = normal * half_width * 1.02 * side
-			draw_line(
-				rail_center - rail_half + offset,
-				rail_center + rail_half + offset,
-				Color(color.r, color.g, color.b, rail_alpha),
-				maxf(1.0, half_width * 0.07),
-				true
-			)
-
-	# Alvo circular grande e estavel. O arco interno mostra o progresso.
-	var head_size: float = half_width * (1.05 + pulse * (0.08 if active else 0.025))
-	draw_circle(head, head_size * 1.30, Color(color.r, color.g, color.b, 0.15 + pulse * 0.06), true)
-	draw_circle(head, head_size, Color(0.008, 0.012, 0.026, 0.98), true)
-	draw_arc(head, head_size, 0.0, TAU, 48, Color.WHITE, maxf(3.0, half_width * 0.22), true)
-	draw_arc(
-		head,
-		head_size * 0.70,
-		-PI * 0.5,
-		-PI * 0.5 + TAU * (progress if progress > 0.0 else 0.96),
-		40,
-		Color(color.r, color.g, color.b, 1.0),
-		maxf(3.0, half_width * 0.26),
-		true
-	)
-	draw_circle(head, head_size * 0.24, Color.WHITE if active else color, true)
-
-	# Ticks radiais no alvo: dao acabamento de mostrador/medidor e
-	# marcam visualmente o quanto ja foi segurado.
-	for index in range(8):
-		var tick_angle: float = -PI * 0.5 + TAU * float(index) / 8.0
-		var tick_dir := Vector2(cos(tick_angle), sin(tick_angle))
-		var filled: bool = (float(index) / 8.0) <= progress
+	# Pulsos curtos correndo para o alvo. Substituem os chevrons e os
+	# trilhos tracejados: metade dos tracos, muito mais movimento.
+	var pulse_count: int = 3 if active else 2
+	var phase: float = fmod(_idle_time() * (1.35 if active else 0.55), 1.0)
+	for index in range(pulse_count):
+		var travel: float = fmod(phase + float(index) / float(pulse_count), 1.0)
+		var span: float = minf(length * 0.20, radius * 0.05)
+		var pulse_head: Vector2 = tail.lerp(head, travel)
+		var pulse_tail: Vector2 = pulse_head - direction * span
+		var alpha: float = sin(PI * travel) * (0.85 if active else 0.40) * fade
 		draw_line(
-			head + tick_dir * head_size * 1.08,
-			head + tick_dir * head_size * (1.30 if filled else 1.20),
-			Color(
-				color.r,
-				color.g,
-				color.b,
-				(0.95 if filled else 0.30) * (1.0 if active else 0.75)
-			),
-			maxf(1.5, half_width * (0.13 if filled else 0.08)),
+			pulse_tail,
+			pulse_head,
+			Color(1.0, 1.0, 1.0, alpha),
+			maxf(1.5, half_width * 0.44),
 			true
 		)
 
-	# Cauda com anel, fechando a fita em vez de terminar num disco seco.
-	draw_circle(tail, half_width * 0.86, Color(color.r, color.g, color.b, 0.92), true)
+	# Cauda que desvanece: tres tracos curtos com alpha caindo, no lugar
+	# do disco solido que fechava a fita antes.
+	for index in range(3):
+		var t: float = float(index) / 3.0
+		var from: Vector2 = tail + direction * length * t * 0.10
+		var to: Vector2 = tail + direction * length * (t + 0.33) * 0.10
+		draw_line(
+			from,
+			to,
+			Color(color.r, color.g, color.b, (0.10 + t * 0.22) * fade),
+			half_width * (1.0 + t * 0.4),
+			true
+		)
+
+	_draw_hold_target(head, half_width, color, highlight, active, progress, fade, pulse)
+
+
+## Alvo do hold: anel fino com arco de progresso. Sem miolo escuro
+## chapado — o preenchimento e um brilho, entao o alvo nao vira um
+## botao opaco em cima do cenario.
+func _draw_hold_target(
+	head: Vector2,
+	half_width: float,
+	color: Color,
+	highlight: Color,
+	active: bool,
+	progress: float,
+	fade: float,
+	pulse: float
+) -> void:
+	var size: float = half_width * (1.75 + pulse * (0.12 if active else 0.04))
+
+	_draw_soft_glow(head, size * 1.7, color, (0.30 if active else 0.16) * fade, 3)
 	draw_arc(
-		tail,
-		half_width * 1.18,
+		head,
+		size,
 		0.0,
 		TAU,
-		20,
-		Color(color.r, color.g, color.b, 0.34 + pulse * 0.10),
-		maxf(1.5, half_width * 0.10),
+		40,
+		Color(color.r, color.g, color.b, 0.42 * fade),
+		maxf(1.5, half_width * 0.30),
+		true
+	)
+
+	var shown: float = progress if progress > 0.0 else 1.0
+	if shown > 0.001:
+		draw_arc(
+			head,
+			size,
+			-PI * 0.5,
+			-PI * 0.5 + TAU * shown,
+			44,
+			Color(highlight.r, highlight.g, highlight.b, (0.98 if active else 0.70) * fade),
+			maxf(2.0, half_width * 0.40),
+			true
+		)
+
+	draw_circle(
+		head,
+		size * 0.26,
+		Color(highlight.r, highlight.g, highlight.b, (0.95 if active else 0.55) * fade),
 		true
 	)
 
@@ -1668,13 +1799,18 @@ func _draw_chevrons(
 	accent: Color,
 	style: int = 0
 ) -> void:
-	var spacing: float = radius * 0.052
+	var size: float = radius * 0.058
+	# O espacamento nasce do TAMANHO REAL da seta escolhida, com folga
+	# de 35%. Antes era um valor fixo (0.052 * raio) menor que a propria
+	# seta, entao elas se sobrepunham e o caminho virava uma mancha —
+	# pior ainda no dardo, que e a silhueta mais comprida.
+	var spacing: float = _arrow_footprint(style) * size * 1.55
 	var estimated_length: float = float(lengths.get("total", 0.0))
 	if estimated_length <= 0.0:
 		for index in range(points.size() - 1):
 			estimated_length += points[index].distance_to(points[index + 1])
 
-	var count: int = maxi(5, int(ceil(estimated_length / maxf(spacing, 1.0))))
+	var count: int = maxi(3, int(floor(estimated_length / maxf(spacing, 1.0))))
 	var start_index: int = clampi(int(floor(start_progress * float(count))), 0, count - 1)
 
 	for index in range(start_index, count):
@@ -1683,7 +1819,21 @@ func _draw_chevrons(
 		var tangent: Vector2 = PATH_BUILDER.tangent_at_cached(points, lengths, progress)
 		var mix_value: float = 0.10 + 0.18 * float(index % 3)
 		var arrow_color: Color = color.lerp(accent, mix_value)
-		_draw_chevron(position_value, tangent, radius * 0.058, arrow_color, style)
+		_draw_chevron(position_value, tangent, size, arrow_color, style)
+
+
+## Comprimento que cada silhueta ocupa ao longo do caminho, em
+## multiplos do tamanho base. Usado para espacar as setas sem palpite.
+func _arrow_footprint(style: int) -> float:
+	match posmod(style, TAP_PALETTE.ARROW_STYLE_COUNT):
+		1:
+			return 2.95
+		2:
+			return 2.00
+		3:
+			return 2.30
+		_:
+			return 2.10
 
 
 ## Quatro desenhos de seta. A cor sempre chega pronta de quem chamou
@@ -1922,8 +2072,13 @@ func _draw_star(
 			spikes = 6
 			inner_ratio = 0.54
 		2:
+			# 4 pontas: a versao anterior usava cintura 0.26, tao fina
+			# que os tres aneis concentricos se cruzavam e o desenho
+			# saia embolado — parecia um X torto com um risco atravessado
+			# por cima. Cintura mais aberta mantem a silhueta de brilho
+			# e deixa os aneis empilhados sem se tocarem.
 			spikes = 4
-			inner_ratio = 0.26
+			inner_ratio = 0.40
 		3:
 			spikes = 8
 			inner_ratio = 0.60
@@ -1959,7 +2114,10 @@ func _draw_star(
 
 	draw_polyline(outer, Color(0.0, 0.0, 0.0, 0.90), maxf(12.0, size * 0.30), true)
 	draw_polyline(outer, Color.WHITE, maxf(7.0, size * 0.16), true)
-	draw_polyline(middle, color, maxf(5.0, size * 0.13), true)
+	# Com apenas quatro pontas os aneis internos ficam grudados no
+	# contorno; a de 4 pontas leva so um anel de reforco.
+	if resolved_style != 2:
+		draw_polyline(middle, color, maxf(5.0, size * 0.13), true)
 	draw_polyline(inner, accent, maxf(3.5, size * 0.10), true)
 
 	# Detalhe exclusivo de cada variacao, ainda na cor do objeto.
@@ -1977,15 +2135,19 @@ func _draw_star(
 					true
 				)
 		2:
-			# Brilho: um risco longo no sentido do trajeto.
-			var flare_dir := Vector2(cos(rotation_value), sin(rotation_value))
-			draw_line(
-				position_value - flare_dir * size * 1.32,
-				position_value + flare_dir * size * 1.32,
-				Color(accent.r, accent.g, accent.b, 0.42 + pulse * 0.18),
-				maxf(1.5, size * 0.070),
-				true
-			)
+			# Brilho: dois raios curtos SOBRE as pontas da estrela, nao
+			# um risco solto atravessando o desenho. Assim o detalhe
+			# reforca a silhueta em vez de brigar com ela.
+			for axis in range(2):
+				var flare_angle: float = rotation_value - PI * 0.5 + PI * float(axis) * 0.5
+				var flare_dir := Vector2(cos(flare_angle), sin(flare_angle))
+				draw_line(
+					position_value - flare_dir * size * 1.18,
+					position_value + flare_dir * size * 1.18,
+					Color(accent.r, accent.g, accent.b, 0.34 + pulse * 0.16),
+					maxf(1.5, size * 0.050),
+					true
+				)
 		3:
 			# Explosao: anel fino amarrando as oito pontas.
 			draw_arc(
@@ -2200,10 +2362,32 @@ func _draw_hold_burst(
 		float(Time.get_ticks_msec()) / 1000.0 * 1.8
 	)
 
-	# Camadas reduzidas (eram 5 poligonos + 8 cristais + glow de 5
-	# camadas): o burst de HOLD e o que mais pesava por acontecer bem
-	# na transicao pro efeito de acerto, que era onde o travamento
-	# ficava mais visivel. Menos camadas, mesma leitura de "portal".
+	# Rastro de entrega: no primeiro terco do estouro ainda existe um
+	# feixe curto vindo do centro, no lugar exato onde a fita acabou de
+	# se recolher. E o que emenda o hold no efeito — sem ele a fita
+	# sumia num quadro e a explosao aparecia no seguinte, e o olho lia
+	# isso como engasgo mesmo com o jogo rodando liso.
+	if progress < 0.34:
+		var handoff: float = 1.0 - progress / 0.34
+		var direction_in: Vector2 = (position_value - center).normalized()
+		if direction_in.length_squared() > 0.001:
+			var beam_length: float = radius * 0.085 * handoff
+			var highlight: Color = TAP_PALETTE.highlight(color)
+			draw_line(
+				position_value - direction_in * beam_length,
+				position_value,
+				Color(color.r, color.g, color.b, handoff * 0.55),
+				maxf(2.0, radius * 0.010),
+				true
+			)
+			draw_line(
+				position_value - direction_in * beam_length,
+				position_value,
+				Color(highlight.r, highlight.g, highlight.b, handoff * 0.85),
+				maxf(1.5, radius * 0.0034),
+				true
+			)
+
 	_draw_soft_glow(
 		position_value,
 		radius * (0.15 + progress * 0.22),

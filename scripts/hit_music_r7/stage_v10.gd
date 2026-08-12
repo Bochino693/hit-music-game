@@ -20,7 +20,7 @@ func _ready() -> void:
 		_pre_game_title.text = "ESCOLHA A DIFICULDADE"
 	if _pre_game_subtitle != null:
 		_pre_game_subtitle.text = (
-			"A: MOVER     B: SELECIONAR\n"
+			"A / E: MOVER     B: SELECIONAR\n"
 			+ "TOQUE EM FACIL OU DIFICIL PARA INICIAR"
 		)
 
@@ -31,13 +31,17 @@ func _ready() -> void:
 		_primary_color(),
 		_accent_color()
 	)
-	# A/B ficam acesos persistentes nesta tela (padrao do MENU: lane 0
-	# = A/mover, lane 1 = B/selecionar) — antes so piscavam no toque.
-	LED_CLIENT.menu_state()
+	# A/B/E ficam acesos persistentes nesta tela: A e E movem o cursor e
+	# B seleciona. E o mesmo trio do seletor de musicas, entao o jogador
+	# nao troca de botao entre uma tela e outra.
+	_apply_menu_leds()
 
 
 func _process_pre_game_inputs() -> void:
-	if _action_pressed("input_a"):
+	# input_e e o mesmo botao fisico de DESCER usado no seletor de
+	# musicas (ver DOWN_ACTION em selector.gd), entao ele tambem move o
+	# cursor aqui — o jogador nao precisa trocar de botao entre telas.
+	if _action_pressed("input_a") or _action_pressed("input_e"):
 		_move_difficulty_cursor()
 	elif _action_pressed("input_b"):
 		_confirm_difficulty()
@@ -74,6 +78,19 @@ func _handle_pre_game_touch(
 		_confirm_difficulty()
 
 
+## Trio de LEDs dos menus (A = mover, B = selecionar, E = descer).
+## As lanes vem de led_client.gd, que e a fonte unica do mapeamento.
+func _apply_menu_leds() -> void:
+	LED_CLIENT.menu_state_three(
+		LED_CLIENT.MENU_NEXT_COLOR,
+		LED_CLIENT.MENU_SELECT_COLOR,
+		LED_CLIENT.MENU_NEXT_COLOR,
+		LED_CLIENT.NAV_NEXT_LANE,
+		LED_CLIENT.NAV_SELECT_LANE,
+		LED_CLIENT.NAV_DOWN_LANE
+	)
+
+
 func _move_difficulty_cursor() -> void:
 	_difficulty_cursor = (
 		0
@@ -88,7 +105,7 @@ func _move_difficulty_cursor() -> void:
 	)
 
 	LED_CLIENT.menu_next_feedback()
-	LED_CLIENT.menu_state()
+	_apply_menu_leds()
 
 
 func _confirm_difficulty() -> void:
@@ -97,6 +114,27 @@ func _confirm_difficulty() -> void:
 
 	LED_CLIENT.menu_select_feedback()
 	super._confirm_difficulty()
+
+	# A tela de dificuldade escurece o fundo de proposito para o painel
+	# ler bem (background_intensity = 0.045, logo abaixo). Esse valor
+	# continuava valendo durante a PARTIDA inteira, porque nada refazia
+	# o perfil depois de confirmar — o universo da musica entrava
+	# apagado. Aqui o perfil real volta antes do jogo comecar.
+	if _difficulty_confirmed:
+		_restore_gameplay_difficulty()
+
+
+func _restore_gameplay_difficulty() -> void:
+	_difficulty = CATALOG.get_difficulty(_song, _difficulty_name)
+
+	if _renderer != null:
+		_renderer.configure(
+			_center,
+			_radius,
+			_lane_positions,
+			_song,
+			_difficulty
+		)
 
 
 func _select_difficulty(

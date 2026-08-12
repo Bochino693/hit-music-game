@@ -6,10 +6,6 @@ var _touch_last: Vector2 = Vector2.ZERO
 var _touch_velocity: float = 0.0
 
 
-# Lane fisica que acende como indicador do input D (desce/anterior).
-# O comando MENU do firmware so acende 2 lanes por vez (idxA/idxB,
-# ja usadas por A/B); D precisa de um LED %d avulso por cima.
-const DOWN_LANE_INDEX: int = 3
 
 
 func _ready() -> void:

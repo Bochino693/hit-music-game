@@ -40,6 +40,12 @@ const CIRCLE_SCALE: float = 0.985
 const PRESENTATION_SECONDS: float = 2.70
 const COUNTDOWN_SECONDS: float = 3.0
 const RESULT_SECONDS: float = 12.0
+## Cor propria do modal. Ele NAO usa mais a paleta da musica: o painel
+## precisa se destacar do cenario que acabou de rodar atras dele, senao
+## um resultado vermelho em cima do carmine (que ja e vermelho) some.
+const RESULT_BASE_COLOR: Color = Color(0.055, 0.045, 0.135, 1.0)
+const RESULT_PASS_COLOR: Color = Color(0.25, 1.0, 0.62, 1.0)
+const RESULT_FAIL_COLOR: Color = Color(1.0, 0.32, 0.42, 1.0)
 const RESULT_PASS_PERCENT: float = 70.0
 const RESULT_INPUT_LOCK_SECONDS: float = 0.90
 const RECORD_PATH: String = "user://hit_music_records.json"
@@ -103,6 +109,11 @@ var _result_panel: Panel
 var _result_title: Label
 var _result_score: Label
 var _result_details: Label
+var _result_timer_label: Label
+var _result_primary_button: Panel
+var _result_primary_label: Label
+var _result_secondary_button: Panel
+var _result_secondary_label: Label
 
 var _score_quality_sum: float = 0.0
 var _judgement_count: int = 0
@@ -185,8 +196,9 @@ func _process(delta: float) -> void:
 			if _song_time >= _song_duration - 0.02:
 				_request_song_finish()
 		GameState.RESULT:
+			_update_result_countdown()
 			if _state_time >= RESULT_SECONDS:
-				_go_to_selector()
+				_expire_result()
 
 	_renderer.set_runtime(
 		_events,
@@ -400,8 +412,8 @@ func _build_hud() -> void:
 
 	# Painel reservado somente ao resultado da partida atual.
 	_result_panel = Panel.new()
-	_result_panel.position = _center - Vector2(_radius * 0.62, _radius * 0.56)
-	_result_panel.size = Vector2(_radius * 1.24, _radius * 1.12)
+	_result_panel.position = _center - Vector2(_radius * 0.62, _radius * 0.62)
+	_result_panel.size = Vector2(_radius * 1.24, _radius * 1.24)
 	_result_panel.visible = false
 	_result_panel.z_index = 240
 	_result_panel.add_theme_stylebox_override("panel", _result_panel_style())
@@ -420,10 +432,63 @@ func _build_hud() -> void:
 
 	_result_details = _make_label("", int(_radius * 0.028), HORIZONTAL_ALIGNMENT_CENTER, font)
 	_result_details.position = Vector2(_radius * 0.06, _radius * 0.42)
-	_result_details.size = Vector2(_result_panel.size.x - _radius * 0.12, _radius * 0.60)
+	_result_details.size = Vector2(_result_panel.size.x - _radius * 0.12, _radius * 0.26)
 	_result_details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_result_details.clip_text = true
 	_result_panel.add_child(_result_details)
+
+	_build_result_actions(font)
+
+
+## Botoes e cronometro do modal. Ficam abaixo dos detalhes, dentro do
+## painel, com area de toque propria — antes o modal era so texto e
+## qualquer clique na tela disparava a mesma acao.
+func _build_result_actions(font: Font) -> void:
+	var margin: float = _radius * 0.07
+	var width: float = _result_panel.size.x - margin * 2.0
+	var button_height: float = _radius * 0.115
+
+	_result_primary_button = Panel.new()
+	_result_primary_button.position = Vector2(margin, _radius * 0.70)
+	_result_primary_button.size = Vector2(width, button_height)
+	_result_primary_button.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_result_panel.add_child(_result_primary_button)
+
+	_result_primary_label = _make_label(
+		"CONTINUAR",
+		int(_radius * 0.042),
+		HORIZONTAL_ALIGNMENT_CENTER,
+		font
+	)
+	_result_primary_label.size = _result_primary_button.size
+	_result_primary_label.clip_text = true
+	_result_primary_button.add_child(_result_primary_label)
+
+	_result_secondary_button = Panel.new()
+	_result_secondary_button.position = Vector2(margin, _radius * 0.70 + button_height + _radius * 0.035)
+	_result_secondary_button.size = Vector2(width, button_height)
+	_result_secondary_button.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_result_panel.add_child(_result_secondary_button)
+
+	_result_secondary_label = _make_label(
+		"ESCOLHER OUTRA MUSICA",
+		int(_radius * 0.034),
+		HORIZONTAL_ALIGNMENT_CENTER,
+		font
+	)
+	_result_secondary_label.size = _result_secondary_button.size
+	_result_secondary_label.clip_text = true
+	_result_secondary_button.add_child(_result_secondary_label)
+
+	_result_timer_label = _make_label(
+		"",
+		int(_radius * 0.036),
+		HORIZONTAL_ALIGNMENT_CENTER,
+		font
+	)
+	_result_timer_label.position = Vector2(margin, _result_panel.size.y - _radius * 0.115)
+	_result_timer_label.size = Vector2(width, _radius * 0.075)
+	_result_panel.add_child(_result_timer_label)
 
 
 ## Selo do recorde. Fica encostado no canto superior direito do painel,
@@ -813,9 +878,13 @@ func _update_notes_and_misses() -> void:
 
 func _process_physical_inputs() -> void:
 	if _state == GameState.RESULT:
-		if not ArcadeSettings.is_credit_mode():
-			if _action_pressed("input_start") or _action_pressed("ui_accept"):
-				_activate_result_action()
+		# Os dois modos aceitam comando agora. Quem decide se a acao vale
+		# e o proprio _activate_*: no modo credito ela so passa se houver
+		# ficha, e sem ficha o cronometro leva para a abertura.
+		if _action_pressed("input_start") or _action_pressed("ui_accept"):
+			_activate_result_action()
+		elif _action_pressed("input_b"):
+			_activate_result_change_song()
 		return
 
 	if _state != GameState.PLAYING:
@@ -836,11 +905,10 @@ func _process_physical_inputs() -> void:
 
 func _input(event: InputEvent) -> void:
 	if _state == GameState.RESULT:
-		if not ArcadeSettings.is_credit_mode():
-			if event is InputEventScreenTouch and event.pressed:
-				_activate_result_action()
-			elif event is InputEventMouseButton and event.pressed:
-				_activate_result_action()
+		if event is InputEventScreenTouch and event.pressed:
+			_handle_result_pointer((event as InputEventScreenTouch).position)
+		elif event is InputEventMouseButton and event.pressed:
+			_handle_result_pointer((event as InputEventMouseButton).position)
 		return
 
 	if _state != GameState.PLAYING:
@@ -1369,12 +1437,10 @@ func _finish_game(failed: bool) -> void:
 
 	var score: float = _score_percent()
 	_result_score_percent = score
+	_apply_result_theme()
 	_result_title.text = "CLASSIFICADO" if score >= RESULT_PASS_PERCENT else "NÃO CLASSIFICADO"
 	_result_score.text = "%.2f%%" % score
-	_result_score.add_theme_color_override(
-		"font_color",
-		_primary_color() if score >= RESULT_PASS_PERCENT else Color(1.0, 0.08, 0.12, 1.0)
-	)
+	_result_score.add_theme_color_override("font_color", _result_accent_color())
 	_result_details.text = (
 		"PARTIDA ATUAL\nACERTOS %d   ERROS %d\nMAX COMBO %d\n%s\n%s"
 		% [_hits, _misses, _max_combo, _result_qualification_text(), _result_action_hint()]
@@ -1433,12 +1499,14 @@ func _force_result_panel_visible() -> void:
 	_result_panel.move_to_front()
 
 
+## Texto de apoio do modal. As acoes reais estao nos botoes; aqui fica
+## so a explicacao curta do que cada caminho faz.
 func _result_action_hint() -> String:
 	if ArcadeSettings.is_credit_mode():
-		return "RETORNO AO MENU EM 12 SEGUNDOS"
-	if _result_score_percent >= RESULT_PASS_PERCENT:
-		return "START OU TOQUE: PRÓXIMA MÚSICA\nMENU AUTOMÁTICO EM 12 SEGUNDOS"
-	return "START OU TOQUE: TENTAR NOVAMENTE\nMENU AUTOMÁTICO EM 12 SEGUNDOS"
+		if ArcadeSettings.credits > 0:
+			return "VOCÊ TEM %d FICHA(S)" % ArcadeSettings.credits
+		return "SEM FICHA • INSIRA CRÉDITO PARA JOGAR"
+	return "TOQUE EM UMA OPÇÃO PARA CONTINUAR"
 
 
 func _result_qualification_text() -> String:
@@ -1447,22 +1515,151 @@ func _result_qualification_text() -> String:
 	return "MÍNIMO 70% • TENTE NOVAMENTE"
 
 
+## Aplica a cor do modal e o texto dos dois botoes de acordo com o modo
+## do gabinete. Rodado uma vez, quando o resultado aparece.
+func _apply_result_theme() -> void:
+	if _result_panel == null or not is_instance_valid(_result_panel):
+		return
+
+	_result_panel.add_theme_stylebox_override("panel", _result_panel_style())
+	_result_title.add_theme_color_override("font_color", _result_accent_color())
+
+	var credit_mode: bool = ArcadeSettings.is_credit_mode()
+	var has_credit: bool = ArcadeSettings.credits > 0
+	var passed: bool = _result_score_percent >= RESULT_PASS_PERCENT
+
+	# Botao principal: continuar jogando. No modo credito ele so existe
+	# se houver ficha — sem ficha nao ha o que oferecer.
+	var primary_available: bool = (not credit_mode) or has_credit
+	if credit_mode:
+		_result_primary_label.text = (
+			"START • USAR FICHA E SEGUIR" if passed else "START • USAR FICHA E REPETIR"
+		)
+	else:
+		_result_primary_label.text = (
+			"START • PRÓXIMA MÚSICA" if passed else "START • TENTAR DE NOVO"
+		)
+
+	_result_primary_button.visible = primary_available
+	_result_primary_button.add_theme_stylebox_override(
+		"panel",
+		_result_button_style(true)
+	)
+
+	# Botao secundario: trocar de musica. No modo credito ele tambem
+	# depende de ficha, porque escolher outra musica e comecar outra
+	# partida.
+	_result_secondary_button.visible = primary_available
+	_result_secondary_label.text = "B • ESCOLHER OUTRA MÚSICA"
+	_result_secondary_button.add_theme_stylebox_override(
+		"panel",
+		_result_button_style(false)
+	)
+
+	_fit_label_to_width(
+		_result_primary_label,
+		_result_primary_button.size.x * 0.92,
+		int(_radius * 0.042),
+		int(_radius * 0.022)
+	)
+	_fit_label_to_width(
+		_result_secondary_label,
+		_result_secondary_button.size.x * 0.92,
+		int(_radius * 0.034),
+		int(_radius * 0.020)
+	)
+
+
+## Cronometro visivel. Alem de contar, ele diz PARA ONDE o tempo leva,
+## que muda com o modo e com o saldo de fichas.
+func _update_result_countdown() -> void:
+	if _result_timer_label == null or not is_instance_valid(_result_timer_label):
+		return
+
+	var remaining: int = maxi(0, int(ceil(RESULT_SECONDS - _state_time)))
+	_result_timer_label.text = "ABERTURA EM %d" % remaining
+
+	# Fica em branco no comeco e vai puxando para o vermelho no fim.
+	var urgency: float = clampf(1.0 - float(remaining) / RESULT_SECONDS, 0.0, 1.0)
+	_result_timer_label.add_theme_color_override(
+		"font_color",
+		Color.WHITE.lerp(RESULT_FAIL_COLOR, urgency * urgency)
+	)
+
+
+## Fim do cronometro sem escolha: volta para a abertura, nos dois modos.
+func _expire_result() -> void:
+	if _result_transitioning:
+		return
+	_result_transitioning = true
+	LED_CLIENT.clear_all()
+	_go_to_opening()
+
+
+## Acao principal do modal: seguir jogando. No modo credito consome uma
+## ficha; sem ficha nao faz nada (o cronometro leva para a abertura).
 func _activate_result_action() -> void:
-	if _state != GameState.RESULT or _result_transitioning:
+	if not _can_act_on_result():
 		return
-	# Descarta o toque/START residual do ultimo hit. Sem esta trava o modal
-	# podia ser criado e a cena recarregada no mesmo instante, parecendo
-	# que o resultado nunca apareceu.
-	if _state_time < RESULT_INPUT_LOCK_SECONDS:
+	if ArcadeSettings.is_credit_mode() and not ArcadeSettings.try_consume_credit():
 		return
-	if ArcadeSettings.is_credit_mode():
-		return
+
 	_result_transitioning = true
 	LED_CLIENT.clear_all()
 	if _result_score_percent >= RESULT_PASS_PERCENT:
 		_go_to_next_song()
 	else:
 		get_tree().reload_current_scene()
+
+
+## Acao secundaria: escolher outra musica no seletor.
+func _activate_result_change_song() -> void:
+	if not _can_act_on_result():
+		return
+	if ArcadeSettings.is_credit_mode() and ArcadeSettings.credits <= 0:
+		return
+
+	_result_transitioning = true
+	LED_CLIENT.clear_all()
+	_go_to_selector()
+
+
+## Toque no modal. Cada botao tem sua area; um toque em qualquer outro
+## ponto vale como "continuar", que e o atalho que o jogador espera no
+## modo livre. Sem ficha (modo credito) nada responde e o cronometro
+## termina levando para a abertura.
+func _handle_result_pointer(position_value: Vector2) -> void:
+	if _result_secondary_button != null and is_instance_valid(_result_secondary_button):
+		if _result_secondary_button.visible and Rect2(
+			_result_secondary_button.global_position,
+			_result_secondary_button.size
+		).has_point(position_value):
+			_activate_result_change_song()
+			return
+
+	if _result_primary_button != null and is_instance_valid(_result_primary_button):
+		if _result_primary_button.visible and Rect2(
+			_result_primary_button.global_position,
+			_result_primary_button.size
+		).has_point(position_value):
+			_activate_result_action()
+			return
+
+	_activate_result_action()
+
+
+func _can_act_on_result() -> bool:
+	if _state != GameState.RESULT or _result_transitioning:
+		return false
+	# Descarta o toque/START residual do ultimo hit. Sem esta trava o modal
+	# podia ser criado e a cena recarregada no mesmo instante, parecendo
+	# que o resultado nunca apareceu.
+	return _state_time >= RESULT_INPUT_LOCK_SECONDS
+
+
+func _go_to_opening() -> void:
+	LED_CLIENT.clear_all()
+	get_tree().change_scene_to_file("res://scenes/opening.tscn")
 
 
 func _go_to_next_song() -> void:
@@ -1752,17 +1949,43 @@ func _progress_fill_style() -> StyleBoxFlat:
 	return style
 
 
+## O modal tem paleta propria (RESULT_BASE_COLOR) e o acento muda com o
+## resultado: verde quando classifica, vermelho quando nao. Antes ele
+## herdava a cor da musica, entao no carmine (vermelho) o painel de
+## "nao classificado" se confundia com o proprio cenario.
 func _result_panel_style() -> StyleBoxFlat:
+	var accent: Color = _result_accent_color()
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.006, 0.010, 0.022, 0.96)
-	style.border_color = _primary_color()
+	style.bg_color = Color(RESULT_BASE_COLOR.r, RESULT_BASE_COLOR.g, RESULT_BASE_COLOR.b, 0.97)
+	style.border_color = accent
 	style.set_border_width_all(4)
 	style.set_corner_radius_all(22)
-	style.shadow_color = Color(
-		_primary_color().r,
-		_primary_color().g,
-		_primary_color().b,
-		0.28
+	style.shadow_color = Color(accent.r, accent.g, accent.b, 0.34)
+	style.shadow_size = 20
+	return style
+
+
+func _result_accent_color() -> Color:
+	return (
+		RESULT_PASS_COLOR
+		if _result_score_percent >= RESULT_PASS_PERCENT
+		else RESULT_FAIL_COLOR
 	)
-	style.shadow_size = 16
+
+
+func _result_button_style(highlighted: bool) -> StyleBoxFlat:
+	var accent: Color = _result_accent_color()
+	var style := StyleBoxFlat.new()
+	style.bg_color = (
+		Color(accent.r, accent.g, accent.b, 0.20)
+		if highlighted
+		else Color(1.0, 1.0, 1.0, 0.06)
+	)
+	style.border_color = (
+		Color(accent.r, accent.g, accent.b, 0.90)
+		if highlighted
+		else Color(1.0, 1.0, 1.0, 0.24)
+	)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(14)
 	return style

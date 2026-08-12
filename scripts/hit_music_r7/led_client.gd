@@ -6,6 +6,17 @@ extends RefCounted
 const MENU_NEXT_COLOR: Color = Color(0.0, 0.72, 1.0, 1.0)
 const MENU_SELECT_COLOR: Color = Color(1.0, 0.82, 0.08, 1.0)
 
+## Mapeamento fisico dos botoes de navegacao dos menus. Fonte unica:
+## seletor de musicas, tela de dificuldade e os LEDs leem daqui, entao
+## trocar um botao de lugar e uma linha so. DESCER passou do input_d
+## (lane 3) para o input_e (lane 4).
+const NAV_NEXT_ACTION: String = "input_a"
+const NAV_SELECT_ACTION: String = "input_b"
+const NAV_DOWN_ACTION: String = "input_e"
+const NAV_NEXT_LANE: int = 0
+const NAV_SELECT_LANE: int = 1
+const NAV_DOWN_LANE: int = 4
+
 
 static func _client() -> Node:
 	var main_loop := Engine.get_main_loop()

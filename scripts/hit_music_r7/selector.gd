@@ -14,6 +14,12 @@ const PREVIEW_DELAY: float = 0.75
 const PREVIEW_ALPHA: float = 0.62
 const CARD_SPACING_RATIO: float = 0.205
 
+## Botao que desce na lista — definido em led_client.gd, que e a fonte
+## unica do mapeamento fisico. Passou do input_d (lane 3) para o
+## input_e (lane 4).
+const DOWN_ACTION: String = LED_CLIENT.NAV_DOWN_ACTION
+const DOWN_LANE_INDEX: int = LED_CLIENT.NAV_DOWN_LANE
+
 var _songs: Array = []
 var _index: int = 0
 var _difficulty: String = "easy"
@@ -89,11 +95,11 @@ func _process(delta: float) -> void:
 	_visual_time += delta
 
 	if not _transitioning:
-		# A sobe na lista, D desce (era o inverso). O sentido tem que
+		# A sobe na lista, E desce (ver DOWN_ACTION). O sentido tem que
 		# bater com a posicao fisica dos botoes no gabinete.
 		if _action_pressed("input_a") or _action_pressed("ui_up") or _action_pressed("ui_left"):
 			_change_selection(-1)
-		elif _action_pressed("input_d") or _action_pressed("ui_down") or _action_pressed("ui_right"):
+		elif _action_pressed(DOWN_ACTION) or _action_pressed("ui_down") or _action_pressed("ui_right"):
 			_change_selection(1)
 
 		if _action_pressed("input_b"):
