@@ -28,9 +28,34 @@ const INPUT_ACTIONS: Array[String] = [
 	"input_h",
 ]
 
-const SLIDE_CORRIDOR_TOLERANCE_RATIO: float = 0.115
+## Largura do corredor do arrasto, em fracao do raio. Era 0.115: num
+## disco de 340px isso da 39px de folga para um dedo que cobre uns 45px
+## de tela. Encostar "quase" na linha nao avancava nada e o gesto
+## parecia nao ser lido. 0.165 da a folga de um dedo inteiro sem
+## permitir cortar caminho — quem garante que o trajeto foi varrido e
+## SLIDE_MAX_FORWARD_SPAN, nao a largura.
+const SLIDE_CORRIDOR_TOLERANCE_RATIO: float = 0.165
 const SLIDE_SAMPLE_STEP_RATIO: float = 0.045
-const SLIDE_MAX_FORWARD_SPAN: float = 0.16
+## Quanto uma amostra pode avancar no caminho. Subiu de 0.16 para 0.22
+## porque com engasgo de quadro o dedo anda muito entre duas leituras;
+## com 0.16 o avanco travava justamente quando a tela estava lenta.
+const SLIDE_MAX_FORWARD_SPAN: float = 0.22
+
+## Fracao do trajeto que ja conta como arrasto completo. Era 0.965 —
+## exigia os ultimos pixels em cima da marca. 0.93 fecha a nota quando
+## o gesto ja foi claramente feito.
+const SLIDE_COMPLETE_RATIO: float = 0.93
+## Folga depois do fim do gesto antes de marcar erro.
+const SLIDE_GRACE_SECONDS: float = 0.45
+## A janela para INICIAR um arrasto e maior que a de um tap: o jogador
+## precisa achar o ponto de partida e so entao comecar a varrer, e a
+## nota dura varias batidas. Usar a mesma janela do tap era o que fazia
+## o arrasto "durar pouco tempo para acionar".
+const SLIDE_START_WINDOW_SCALE: float = 2.10
+## Raio de captura do dedo em volta da marca da lane, em fracao do
+## raio. Era 0.155. As lanes ficam a 0.693*raio uma da outra, entao ate
+## 0.34 nao ha ambiguidade; 0.26 e um dedo folgado sem sobreposicao.
+const POINTER_LANE_RADIUS_RATIO: float = 0.26
 
 ## Fisica do desenho do arrasto. O progresso LOGICO pode saltar (o
 ## avanco por botao pula direto para o proximo ponto do caminho, e um
@@ -108,6 +133,9 @@ var _best_score: float = 0.0
 ## Ultimo numero ja publicado da contagem, para nao reenviar o mesmo
 ## COUNT dezenas de vezes por segundo.
 var _countdown_published: int = -1
+## Saldo de fichas ja refletido no modal de resultado, para redesenha-lo
+## quando o jogador inserir credito com o painel aberto.
+var _result_credits_shown: int = -1
 
 var _center: Vector2 = Vector2.ZERO
 var _radius: float = 100.0
@@ -157,6 +185,10 @@ var _mouse_position: Vector2 = Vector2.ZERO
 var _pointer_active: bool = false
 var _pointer_position: Vector2 = Vector2.ZERO
 var _physical_lane_down: Array[bool] = []
+## Eventos que ja nasceram e ainda nao foram resolvidos. Os lacos de
+## quadro andam por aqui em vez de varrerem a fase inteira.
+var _live_events: Array = []
+var _spawn_cursor: int = 0
 
 
 func _song_id() -> String:
@@ -165,9 +197,18 @@ func _song_id() -> String:
 
 func _ready() -> void:
 	Engine.max_fps = 60
-	# Entrega eventos de controle imediatamente. O polling abaixo continua
-	# como rede de seguranca para bridges que atualizam o estado entre frames.
-	Input.use_accumulated_input = false
+	# Amostras de ARRASTO passam a ser agrupadas por quadro. Isto vale
+	# so para InputEventScreenDrag/MouseMotion — botao continua chegando
+	# na hora, e o polling de _process_physical_inputs segue como rede
+	# de seguranca para as bridges.
+	#
+	# Com false, um painel de toque de 150 Hz disparava 150 execucoes de
+	# _handle_pointer_move por segundo, cada uma varrendo _events e
+	# rodando ate 96 amostragens de corredor. Nao se perde precisao ao
+	# agrupar: _advance_slide_progress INTERPOLA entre a ultima posicao
+	# conhecida e a nova, entao o corredor continua sendo varrido ponto
+	# a ponto.
+	Input.use_accumulated_input = true
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	_physical_lane_down.resize(NUM_LANES)
 	_physical_lane_down.fill(false)
@@ -235,9 +276,18 @@ func _process(delta: float) -> void:
 		_pointer_position,
 		_pointer_active
 	)
-	queue_redraw()
 
 
+## Moldura da mesa: fundo preto, o disco escuro e o halo da borda.
+##
+## Isto NAO muda durante a partida — so quando a janela e redimensionada.
+## Mesmo assim era redesenhado a cada quadro, porque _process() chamava
+## queue_redraw() sem condicao: um retangulo de tela cheia mais um arco
+## de 240 segmentos antialiasados por quadro, sempre pintando a mesma
+## imagem. Agora o redesenho so acontece quando a geometria muda (ver
+## _calculate_geometry e _on_viewport_size_changed), e o arco caiu para
+## 64 segmentos — a R=340px isso da menos de 0.5px de erro de corda,
+## invisivel.
 func _draw() -> void:
 	var screen: Vector2 = get_viewport_rect().size
 	draw_rect(Rect2(Vector2.ZERO, screen), Color.BLACK, true)
@@ -250,7 +300,7 @@ func _draw() -> void:
 		_radius * 1.002,
 		0.0,
 		TAU,
-		240,
+		64,
 		Color(glow_color.r, glow_color.g, glow_color.b, 0.12),
 		maxf(4.0, _radius * 0.014),
 		true
@@ -279,6 +329,9 @@ func _calculate_geometry() -> void:
 		_lane_positions.append(
 			_center + Vector2(cos(angle), sin(angle)) * _radius * 0.905
 		)
+
+	# A moldura so precisa ser repintada quando a geometria muda.
+	queue_redraw()
 
 	var top_margin: float = screen.x * TOP_MARGIN_RATIO
 	_video_rect = Rect2(
@@ -673,6 +726,8 @@ func _load_assets() -> void:
 
 func _prepare_chart() -> void:
 	_events = CHART_FACTORY.build(_song, _difficulty_name, _song_duration)
+	_live_events.clear()
+	_spawn_cursor = 0
 	for event_value in _events:
 		if not event_value is Dictionary:
 			continue
@@ -680,6 +735,7 @@ func _prepare_chart() -> void:
 		event["_spawned"] = false
 		event["_resolved"] = false
 		event["_active"] = false
+		event["_started"] = false
 		event["_holding"] = false
 		event["_visual_progress"] = 0.0
 		event["_draw_progress"] = 0.0
@@ -851,17 +907,22 @@ func _update_dynamic_volume(delta: float) -> void:
 	_music_player.volume_db = lerpf(_music_player.volume_db, target_db, rate)
 
 
+## _events esta ordenado por tempo, entao nao ha motivo para varrer a
+## fase INTEIRA a cada quadro procurando o que nasceu: basta continuar
+## de onde parou. Numa musica de 400 notas isso troca 400 leituras de
+## dicionario por quadro por uma ou duas.
 func _spawn_due_events() -> void:
 	var approach: float = float(_difficulty.get("approach", 1.0))
-	for event_value in _events:
+	while _spawn_cursor < _events.size():
+		var event_value: Variant = _events[_spawn_cursor]
 		if not event_value is Dictionary:
+			_spawn_cursor += 1
 			continue
 		var event: Dictionary = event_value as Dictionary
-		if bool(event.get("_spawned", false)):
-			continue
 		var hit_time: float = float(event.get("time", 0.0))
 		if _song_time < hit_time - approach:
-			continue
+			break
+		_spawn_cursor += 1
 
 		event["_spawned"] = true
 		var type_name: String = str(event.get("type", "tap"))
@@ -875,6 +936,8 @@ func _spawn_due_events() -> void:
 			LED_CLIENT.set_lane(lane, _event_color(event))
 		elif type_name == "slide":
 			pass
+
+		_live_events.append(event)
 
 
 func _spawn_tap_visual(event: Dictionary, approach: float) -> void:
@@ -893,10 +956,10 @@ func _spawn_tap_visual(event: Dictionary, approach: float) -> void:
 	LED_CLIENT.set_lane(lane, _tap_color(int(event.get("color_index", 0))))
 
 
+## Todos os lacos de quadro andam sobre _live_events (o que ja nasceu e
+## ainda nao foi resolvido) em vez da fase inteira.
 func _update_tap_visuals() -> void:
-	for event_value in _events:
-		if not event_value is Dictionary:
-			continue
+	for event_value in _live_events:
 		var event: Dictionary = event_value as Dictionary
 		if str(event.get("type", "")) != "tap":
 			continue
@@ -914,9 +977,7 @@ func _update_tap_visuals() -> void:
 ## movimento. Sem isto a estrela saltava de um ponto do caminho para o
 ## outro e o gesto parecia acontecer do nada.
 func _update_slide_draw_progress(delta: float) -> void:
-	for event_value in _events:
-		if not event_value is Dictionary:
-			continue
+	for event_value in _live_events:
 		var event: Dictionary = event_value as Dictionary
 		if str(event.get("type", "")) != "slide":
 			continue
@@ -936,11 +997,17 @@ func _update_slide_draw_progress(delta: float) -> void:
 
 func _update_notes_and_misses() -> void:
 	var hit_window: float = float(_difficulty.get("hit_window", 0.20))
-	for event_value in _events:
-		if not event_value is Dictionary:
-			continue
-		var event: Dictionary = event_value as Dictionary
+	var slide_window: float = _slide_start_window()
+
+	# De tras para frente: eventos resolvidos saem da lista viva no
+	# mesmo passo, sem precisar de uma segunda varredura.
+	for index in range(_live_events.size() - 1, -1, -1):
+		var event: Dictionary = _live_events[index] as Dictionary
 		if bool(event.get("_resolved", false)):
+			# O arrasto resolvido continua sendo desenhado ate a estrela
+			# terminar o trajeto; quem cuida disso e o renderer, que le
+			# _events. Aqui ele so sai da lista de trabalho.
+			_live_events.remove_at(index)
 			continue
 
 		var type_name: String = str(event.get("type", "tap"))
@@ -957,9 +1024,14 @@ func _update_notes_and_misses() -> void:
 			elif _song_time > hit_time + hit_window:
 				_resolve_miss(event)
 		elif type_name == "slide":
-			if not bool(event.get("_active", false)) and _song_time > hit_time + hit_window:
-				_resolve_miss(event)
-			elif _song_time > end_time + 0.28:
+			# Depois de COMECADO, o arrasto e julgado pelo fim do gesto,
+			# nunca mais pela janela de entrada. Antes, soltar o dedo no
+			# meio devolvia o evento para a regra de entrada e ele
+			# morria no quadro seguinte.
+			if bool(event.get("_started", false)):
+				if _song_time > end_time + SLIDE_GRACE_SECONDS:
+					_resolve_miss(event)
+			elif _song_time > hit_time + slide_window:
 				_resolve_miss(event)
 
 
@@ -1061,9 +1133,16 @@ func _handle_pointer_press(source: String, position_value: Vector2) -> void:
 
 
 func _handle_pointer_move(source: String, position_value: Vector2) -> void:
-	for event_value in _events:
-		if not event_value is Dictionary:
-			continue
+	# Se este dedo nao esta conduzindo nenhum arrasto, ele pode ADOTAR
+	# um que ainda nao comecou e cujo ponto de partida esteja embaixo
+	# dele. Sem isto, um toque que caiu alguns pixels fora da marca
+	# perdia a nota para sempre: _handle_pointer_press saia sem fazer
+	# nada e o movimento seguinte era ignorado, porque este laco so
+	# aceita arrastos que ja estao _active com a mesma origem. Era a
+	# causa direta do "nem sempre sao detectados".
+	_try_adopt_slide(source, position_value)
+
+	for event_value in _live_events:
 		var event: Dictionary = event_value as Dictionary
 		if bool(event.get("_resolved", false)):
 			continue
@@ -1085,11 +1164,51 @@ func _handle_pointer_move(source: String, position_value: Vector2) -> void:
 		event["_last_pointer"] = position_value
 
 		var progress: float = float(event.get("_visual_progress", 0.0))
-		if progress >= 0.965:
+		if progress >= SLIDE_COMPLETE_RATIO:
 			# _resolve_hit ja publica o estouro na cor do proprio arrasto.
 			# Antes havia um segundo efeito aqui, na cor de tema da musica,
 			# que pintava por cima do primeiro com a cor errada.
 			_resolve_hit(event, "slide", 1.0)
+
+
+## Procura um arrasto ainda nao iniciado cujo ponto de partida esteja
+## debaixo do dedo, e o entrega a este ponteiro. So age quando o dedo
+## nao esta ocupado com outro gesto.
+func _try_adopt_slide(source: String, position_value: Vector2) -> void:
+	for event_value in _live_events:
+		var busy: Dictionary = event_value as Dictionary
+		if str(busy.get("_source", "")) != source:
+			continue
+		if bool(busy.get("_active", false)) or bool(busy.get("_holding", false)):
+			return
+
+	var tolerance: float = _radius * SLIDE_CORRIDOR_TOLERANCE_RATIO
+	var best: Dictionary = {}
+	var best_distance: float = INF
+
+	for event_value in _live_events:
+		var event: Dictionary = event_value as Dictionary
+		if bool(event.get("_resolved", false)) or bool(event.get("_active", false)):
+			continue
+		if str(event.get("type", "")) != "slide":
+			continue
+		if not _is_selectable(event):
+			continue
+
+		var points_value: Variant = event.get("_path_points", PackedVector2Array())
+		if not points_value is PackedVector2Array:
+			continue
+		var points: PackedVector2Array = points_value as PackedVector2Array
+		if points.size() < 2:
+			continue
+
+		var distance_value: float = points[0].distance_to(position_value)
+		if distance_value <= tolerance and distance_value < best_distance:
+			best_distance = distance_value
+			best = event
+
+	if not best.is_empty():
+		_begin_slide(best, source, true, position_value)
 
 
 # O jogador precisa realmente varrer o caminho do arrasto. Antes, o
@@ -1134,9 +1253,7 @@ func _advance_slide_progress(
 
 
 func _handle_pointer_release(source: String, _position_value: Vector2) -> void:
-	for event_value in _events:
-		if not event_value is Dictionary:
-			continue
+	for event_value in _live_events:
 		var event: Dictionary = event_value as Dictionary
 		if bool(event.get("_resolved", false)):
 			continue
@@ -1151,8 +1268,16 @@ func _handle_pointer_release(source: String, _position_value: Vector2) -> void:
 			else:
 				_resolve_miss(event)
 		elif type_name == "slide" and bool(event.get("_active", false)):
-			if float(event.get("_visual_progress", 0.0)) < 0.90:
-				_resolve_miss(event)
+			if float(event.get("_visual_progress", 0.0)) >= SLIDE_COMPLETE_RATIO:
+				_resolve_hit(event, "slide", 1.0)
+			else:
+				# Soltar o dedo no meio NAO e mais erro imediato. O gesto
+				# so e solto (o progresso ja feito fica guardado) e o
+				# jogador pode retomar enquanto a nota viver; o erro sai
+				# no fim do prazo, em _update_notes_and_misses.
+				event["_active"] = false
+				event["_source"] = ""
+				event.erase("_last_pointer")
 
 
 func _handle_lane_press(
@@ -1172,9 +1297,7 @@ func _handle_lane_press(
 	var best: Dictionary = {}
 	var best_difference: float = INF
 
-	for event_value in _events:
-		if not event_value is Dictionary:
-			continue
+	for event_value in _live_events:
 		var event: Dictionary = event_value as Dictionary
 		if bool(event.get("_resolved", false)):
 			continue
@@ -1220,9 +1343,7 @@ func _handle_lane_press(
 ## por botao fisico — no toque/mouse continua valendo a varredura
 ## completa de _advance_slide_progress, sem atalho.
 func _advance_slide_with_lane(lane: int) -> bool:
-	for event_value in _events:
-		if not event_value is Dictionary:
-			continue
+	for event_value in _live_events:
 		var event: Dictionary = event_value as Dictionary
 		if bool(event.get("_resolved", false)):
 			continue
@@ -1245,7 +1366,7 @@ func _advance_slide_with_lane(lane: int) -> bool:
 			clampi(lane, 0, _lane_positions.size() - 1)
 		]
 
-		if gate_progress >= 0.965:
+		if gate_progress >= SLIDE_COMPLETE_RATIO:
 			_resolve_hit(event, "slide", 1.0)
 		return true
 
@@ -1302,9 +1423,7 @@ func _build_lane_gates(
 
 
 func _handle_lane_release(_lane: int, source: String) -> void:
-	for event_value in _events:
-		if not event_value is Dictionary:
-			continue
+	for event_value in _live_events:
 		var event: Dictionary = event_value as Dictionary
 		if bool(event.get("_resolved", false)):
 			continue
@@ -1326,8 +1445,25 @@ func _handle_lane_release(_lane: int, source: String) -> void:
 func _is_selectable(event: Dictionary) -> bool:
 	if not bool(event.get("_spawned", false)):
 		return false
-	var hit_window: float = float(_difficulty.get("hit_window", 0.20))
-	return _song_time <= float(event.get("time", 0.0)) + hit_window
+
+	# Arrasto que ja foi comecado e largado no meio pode ser RETOMADO
+	# ate o fim do proprio gesto, e nao so dentro da janela de entrada.
+	# Sem isto, tirar o dedo por um instante matava a nota mesmo com
+	# tempo de sobra no relogio dela.
+	if bool(event.get("_started", false)):
+		var end_time: float = float(event.get("end_time", 0.0))
+		return _song_time <= end_time + SLIDE_GRACE_SECONDS
+
+	var window: float = float(_difficulty.get("hit_window", 0.20))
+	if str(event.get("type", "")) == "slide":
+		window = _slide_start_window()
+	return _song_time <= float(event.get("time", 0.0)) + window
+
+
+## Janela para INICIAR um arrasto. Fica em cima da janela da
+## dificuldade, entao continua acompanhando o BPM da musica.
+func _slide_start_window() -> float:
+	return float(_difficulty.get("hit_window", 0.20)) * SLIDE_START_WINDOW_SCALE
 
 
 ## Pontuacao por precisao. Encaixar no anel continua valendo mais, entao
@@ -1354,10 +1490,19 @@ func _begin_slide(
 	has_pointer: bool = false,
 	press_position: Vector2 = Vector2.ZERO
 ) -> void:
+	# Retomada NAO zera o progresso: o trecho que o jogador ja varreu
+	# continua valendo. Quem impede que a retomada vire atalho e
+	# SLIDE_MAX_FORWARD_SPAN, que so deixa cada amostra avancar uma
+	# fatia curta a partir do progresso atual — pegar direto no fim do
+	# traco cai fora do corredor e nao conta.
+	var resuming: bool = bool(event.get("_started", false))
+
 	event["_active"] = true
+	event["_started"] = true
 	event["_source"] = source
-	event["_visual_progress"] = 0.0
-	event["_draw_progress"] = 0.0
+	if not resuming:
+		event["_visual_progress"] = 0.0
+		event["_draw_progress"] = 0.0
 
 	var start_point: Vector2 = _center
 	var points_value: Variant = event.get("_path_points", PackedVector2Array())
@@ -1525,6 +1670,7 @@ func _finish_game(failed: bool) -> void:
 
 	var score: float = _score_percent()
 	_result_score_percent = score
+	_result_credits_shown = ArcadeSettings.credits
 	_apply_result_theme()
 	_result_title.text = "CLASSIFICADO" if score >= RESULT_PASS_PERCENT else "NÃO CLASSIFICADO"
 	_result_score.text = "%.2f%%" % score
@@ -1666,6 +1812,19 @@ func _update_result_countdown() -> void:
 	if _result_timer_label == null or not is_instance_valid(_result_timer_label):
 		return
 
+	# _apply_result_theme rodava UMA vez, ao abrir o modal. No modo
+	# credito com saldo zero os dois botoes nascem escondidos e o
+	# jogador que colocasse a ficha ali continuava olhando um painel sem
+	# botao nenhum ate o cronometro levar para a abertura. Aqui o painel
+	# volta a se montar assim que o saldo muda.
+	if ArcadeSettings.credits != _result_credits_shown:
+		_result_credits_shown = ArcadeSettings.credits
+		_apply_result_theme()
+		_result_details.text = (
+			"ACERTOS %d   ERROS %d\nMAX COMBO %d\n%s\n%s"
+			% [_hits, _misses, _max_combo, _result_qualification_text(), _result_action_hint()]
+		)
+
 	var remaining: int = maxi(0, int(ceil(RESULT_SECONDS - _state_time)))
 	_result_timer_label.text = "ABERTURA EM %d" % remaining
 
@@ -1723,24 +1882,60 @@ func _activate_result_change_song() -> void:
 ## ponto vale como "continuar", que e o atalho que o jogador espera no
 ## modo livre. Sem ficha (modo credito) nada responde e o cronometro
 ## termina levando para a abertura.
+## Toque no modal.
+##
+## Tres correcoes aqui:
+##
+## 1. A area do botao vinha de Rect2(global_position, size). `size` e a
+##    medida LOCAL do Panel e ignora a escala do pai — e _result_panel
+##    entra com scale 0.94 e pivot_offset no centro (ver
+##    _reveal_result_panel). Enquanto a escala nao fechasse em 1.0 o
+##    retangulo testado ficava deslocado do botao que aparece na tela.
+##    get_global_rect() ja devolve o retangulo com a transformada do
+##    pai aplicada.
+##
+## 2. A funcao terminava com um _activate_result_action() solto: QUALQUER
+##    toque que errasse os retangulos disparava "continuar". Errar por
+##    pouco o botao de trocar de musica nao parecia um toque perdido,
+##    parecia o botao errado funcionando. Agora um toque dentro do painel
+##    que nao caia em botao nenhum nao faz nada.
+##
+## 3. Os retangulos ganharam uma folga de meia altura de botao, que e o
+##    que um dedo pede numa mesa de vidro.
 func _handle_result_pointer(position_value: Vector2) -> void:
 	if _result_secondary_button != null and is_instance_valid(_result_secondary_button):
-		if _result_secondary_button.visible and Rect2(
-			_result_secondary_button.global_position,
-			_result_secondary_button.size
+		if _result_secondary_button.visible and _touch_rect(
+			_result_secondary_button
 		).has_point(position_value):
 			_activate_result_change_song()
 			return
 
 	if _result_primary_button != null and is_instance_valid(_result_primary_button):
-		if _result_primary_button.visible and Rect2(
-			_result_primary_button.global_position,
-			_result_primary_button.size
+		if _result_primary_button.visible and _touch_rect(
+			_result_primary_button
 		).has_point(position_value):
 			_activate_result_action()
 			return
 
-	_activate_result_action()
+	# Fora do painel, no modo livre, o toque continua valendo como
+	# "continuar" — e o atalho que o jogador espera. Dentro do painel,
+	# so botao vale.
+	if _result_panel != null and is_instance_valid(_result_panel):
+		if _result_panel.get_global_rect().has_point(position_value):
+			return
+	if not ArcadeSettings.is_credit_mode():
+		_activate_result_action()
+
+
+## Retangulo de toque de um Control, ja com a transformada do pai e uma
+## folga vertical para o dedo.
+func _touch_rect(control: Control) -> Rect2:
+	var rect: Rect2 = control.get_global_rect()
+	var padding: float = rect.size.y * 0.25
+	return Rect2(
+		rect.position - Vector2(0.0, padding),
+		rect.size + Vector2(0.0, padding * 2.0)
+	)
 
 
 func _can_act_on_result() -> bool:
@@ -1890,7 +2085,7 @@ func _nearest_lane(position_value: Vector2) -> int:
 		if distance_value < best_distance:
 			best_distance = distance_value
 			best_lane = lane
-	return best_lane if best_distance <= _radius * 0.155 else -1
+	return best_lane if best_distance <= _radius * POINTER_LANE_RADIUS_RATIO else -1
 
 
 func _state_name() -> String:

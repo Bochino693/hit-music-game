@@ -74,8 +74,59 @@ const RING_PULSE_DURATION: float = 0.85
 var _video_style: StyleBoxFlat
 var _video_inner_style: StyleBoxFlat
 
+## ─── DESEMPENHO ───────────────────────────────────────────────────
+## O cenario (ceu, universo, poeira) mudava 60x por segundo junto com
+## as notas, mas ele nao PRECISA: uma estrela que leva 4 minutos para
+## atravessar a tela nao ganha nada em ser redesenhada a cada 16ms.
+## Agora ele mora numa camada propria, que se redesenha nesta taxa.
+## As notas, o anel e os efeitos continuam a 60 fps na camada de cima.
+##
+## 24 e o padrao. Suba para 30 se a mesa aguentar; desca para 15 se
+## ainda estiver pesado (o cenario fica levemente mais "duro", nada
+## que se note durante a partida).
+const BACKGROUND_REDRAW_HZ: float = 24.0
+
+## Toda primitiva sai por aqui em vez de sair direto por `self`. E o
+## que permite que as MESMAS funcoes de desenho pintem ora na camada
+## de fundo, ora nesta — sem duplicar codigo.
+var _target: CanvasItem = null
+var _bg_layer: BackgroundLayer
+var _background_clock: float = 0.0
+
+## Halo pre-renderizado. Antes cada halo era uma pilha de 3-4 circulos
+## preenchidos concentricos; com 20 particulas de poeira mais as
+## nebulosas e os estouros, dava mais de cem circulos preenchidos por
+## quadro so de brilho. Agora e um quadrado texturizado por halo — e
+## o degrade fica de verdade contínuo, sem as faixas dos circulos.
+var _glow_texture: Texture2D
+
+## As cores do tema saem de Color.from_hsv() dentro de vivid_theme().
+## Elas dependem so de `song`, que muda uma vez por partida — nao ha
+## por que recalcular a cada chamada dentro dos lacos de desenho.
+var _cached_primary: Color = Color(0.0, 0.86, 1.0, 1.0)
+var _cached_secondary: Color = Color.WHITE
+var _cached_accent: Color = Color(1.0, 0.72, 0.0, 1.0)
+var _cached_dark: Color = Color(0.01, 0.02, 0.05, 1.0)
+
+
+## Camada de fundo. Nao guarda estado: so devolve o desenho para o
+## renderer, que pinta nela. `show_behind_parent` a mantem atras das
+## notas mesmo compartilhando o z_index do pai.
+class BackgroundLayer:
+	extends Node2D
+
+	var renderer: Node2D
+
+	func _draw() -> void:
+		if renderer != null and is_instance_valid(renderer):
+			# call() em vez da chamada direta: `renderer` e tipado como
+			# Node2D e o verificador estatico do Godot recusaria um
+			# metodo que Node2D nao declara.
+			renderer.call("paint_background", self)
+
 
 func _ready() -> void:
+	_target = self
 	_video_style = StyleBoxFlat.new()
 	_video_style.bg_color = Color(0.002, 0.004, 0.012, 0.78)
 	_video_style.border_color = Color(1.0, 1.0, 1.0, 0.22)
@@ -89,6 +140,15 @@ func _ready() -> void:
 	_video_inner_style.border_color = Color(1.0, 1.0, 1.0, 0.15)
 	_video_inner_style.set_border_width_all(1)
 	_video_inner_style.set_corner_radius_all(19)
+
+	_glow_texture = _build_glow_texture()
+	_rebuild_color_cache()
+
+	_bg_layer = BackgroundLayer.new()
+	_bg_layer.name = "BackgroundLayer"
+	_bg_layer.renderer = self
+	_bg_layer.show_behind_parent = true
+	add_child(_bg_layer)
 
 	_lane_flash_colors.clear()
 	_lane_flash_energy.clear()
@@ -112,6 +172,8 @@ func configure(
 	song = new_song
 	difficulty = new_difficulty
 	_rebuild_cosmic_cache()
+	_rebuild_color_cache()
+	_request_background_redraw()
 	queue_redraw()
 
 
@@ -240,23 +302,25 @@ func _process(delta: float) -> void:
 		if now - float(pulse.get("start", now)) >= float(pulse.get("duration", RING_PULSE_DURATION)):
 			_ring_pulses.remove_at(index)
 
+	# O cenario tem relogio proprio: ele nao acompanha os 60 fps das
+	# notas. E daqui que vem a maior parte do ganho de desempenho.
+	_background_clock += delta
+	if _background_clock >= 1.0 / maxf(BACKGROUND_REDRAW_HZ, 1.0):
+		_background_clock = 0.0
+		_request_background_redraw()
+
 	var pulses_active: bool = not _ring_pulses.is_empty()
 	if not effects.is_empty() or lane_flash_active or pulses_active or game_state == "playing" or game_state == "selector":
 		queue_redraw()
 
 
+## Camada de CIMA, a 60 fps: anel, energia das lanes, notas e efeitos.
+## Tudo que reage ao dedo do jogador no mesmo quadro esta aqui.
 func _draw() -> void:
 	if radius <= 0.0:
 		return
 
-	# Uma unica camada desenha o cenario. Antes eram tres empilhadas (a
-	# mandala geral, os aneis tecnicos e o overlay tematico), todas com o
-	# mesmo desenho concentrico — por isso toda tela parecia a do carmine
-	# com coisas por cima.
-	_draw_circle_base()
-	_draw_cosmic_sky()
-	_draw_universe()
-	_draw_ambient_particles()
+	_target = self
 	_draw_ring()
 	_draw_ring_pulses()
 	_draw_lane_energy()
@@ -266,6 +330,12 @@ func _draw() -> void:
 			if not event_value is Dictionary:
 				continue
 			var event: Dictionary = event_value as Dictionary
+			# Porta barata antes do str(): a lista tem a fase INTEIRA,
+			# entao a maioria dos eventos ainda nem nasceu. Sem esta
+			# linha o laco convertia centenas de tipos em String por
+			# quadro so para descartar tudo em seguida.
+			if not bool(event.get("_spawned", false)):
+				continue
 			var type_name: String = str(event.get("type", "tap"))
 
 			if bool(event.get("_resolved", false)):
@@ -287,6 +357,64 @@ func _draw() -> void:
 		_draw_pointer(pointer_position)
 
 
+## Camada de BAIXO, na taxa de BACKGROUND_REDRAW_HZ. Chamada pela
+## BackgroundLayer, que passa a si mesma como superficie de desenho.
+func paint_background(canvas: CanvasItem) -> void:
+	if radius <= 0.0:
+		return
+
+	_target = canvas
+	# Uma unica camada desenha o cenario. Antes eram tres empilhadas (a
+	# mandala geral, os aneis tecnicos e o overlay tematico), todas com o
+	# mesmo desenho concentrico — por isso toda tela parecia a do carmine
+	# com coisas por cima.
+	_draw_circle_base()
+	_draw_cosmic_sky()
+	_draw_universe()
+	_draw_ambient_particles()
+	_target = self
+
+
+func _request_background_redraw() -> void:
+	if _bg_layer != null and is_instance_valid(_bg_layer):
+		_bg_layer.queue_redraw()
+
+
+## Halo radial de 128px, gerado uma vez. O branco puro deixa a cor
+## final por conta do `modulate` de cada chamada.
+func _build_glow_texture() -> Texture2D:
+	var gradient := Gradient.new()
+	gradient.offsets = PackedFloat32Array([0.0, 0.32, 0.68, 1.0])
+	gradient.colors = PackedColorArray([
+		Color(1.0, 1.0, 1.0, 1.0),
+		Color(1.0, 1.0, 1.0, 0.52),
+		Color(1.0, 1.0, 1.0, 0.14),
+		Color(1.0, 1.0, 1.0, 0.0),
+	])
+
+	var texture := GradientTexture2D.new()
+	texture.gradient = gradient
+	texture.width = 128
+	texture.height = 128
+	texture.fill = GradientTexture2D.FILL_RADIAL
+	texture.fill_from = Vector2(0.5, 0.5)
+	texture.fill_to = Vector2(1.0, 0.5)
+	return texture
+
+
+func _rebuild_color_cache() -> void:
+	_cached_primary = TAP_PALETTE.vivid_theme(
+		_colors().get("primary", TAP_PALETTE.TAP_CYAN)
+	)
+	_cached_secondary = TAP_PALETTE.vivid_theme(
+		_colors().get("secondary", Color.WHITE)
+	)
+	_cached_accent = TAP_PALETTE.vivid_theme(
+		_colors().get("accent", TAP_PALETTE.TAP_YELLOW)
+	)
+	_cached_dark = _colors().get("dark", Color(0.01, 0.02, 0.05, 1.0))
+
+
 func _colors() -> Dictionary:
 	var value: Variant = song.get("colors", {})
 	if value is Dictionary:
@@ -295,23 +423,19 @@ func _colors() -> Dictionary:
 
 
 func _primary() -> Color:
-	return TAP_PALETTE.vivid_theme(
-		_colors().get("primary", TAP_PALETTE.TAP_CYAN)
-	)
+	return _cached_primary
 
 
 func _secondary() -> Color:
-	return TAP_PALETTE.vivid_theme(_colors().get("secondary", Color.WHITE))
+	return _cached_secondary
 
 
 func _accent() -> Color:
-	return TAP_PALETTE.vivid_theme(
-		_colors().get("accent", TAP_PALETTE.TAP_YELLOW)
-	)
+	return _cached_accent
 
 
 func _dark() -> Color:
-	return _colors().get("dark", Color(0.01, 0.02, 0.05, 1.0))
+	return _cached_dark
 
 
 func _idle_time() -> float:
@@ -329,13 +453,13 @@ func _beat_pulse() -> float:
 func _draw_circle_base() -> void:
 	var pulse: float = _beat_pulse()
 	var base_alpha: float = 0.50 if game_state == "selector" else 1.0
-	draw_circle(
+	_target.draw_circle(
 		center,
 		radius * 0.995,
 		Color(0.002, 0.004, 0.012, base_alpha),
 		true
 	)
-	draw_circle(
+	_target.draw_circle(
 		center,
 		radius * (0.86 + pulse * 0.012),
 		Color(_primary().r, _primary().g, _primary().b, 0.022 + pulse * 0.018),
@@ -398,7 +522,7 @@ func _draw_cosmic_sky() -> void:
 			for link in links:
 				var from: Vector2 = _cosmic_star_position(_cosmic_stars[link.x], time_value)
 				var to: Vector2 = _cosmic_star_position(_cosmic_stars[link.y], time_value)
-				draw_line(from, to, Color(primary.r, primary.g, primary.b, 0.18), maxf(1.0, radius * 0.0018), true)
+				_target.draw_line(from, to, Color(primary.r, primary.g, primary.b, 0.18), maxf(1.0, radius * 0.0018), false)
 
 		"spiral_galaxy":
 			for arm in range(3):
@@ -408,8 +532,8 @@ func _draw_cosmic_sky() -> void:
 					var angle: float = time_value * 0.045 + TAU * float(arm) / 3.0 + progress * TAU * 1.38
 					var position_value: Vector2 = center + Vector2(cos(angle), sin(angle)) * radius * progress * 0.78
 					var arm_color: Color = primary.lerp(accent, progress)
-					draw_line(previous, position_value, Color(arm_color.r, arm_color.g, arm_color.b, 0.13), maxf(1.0, radius * 0.0022), true)
-					draw_circle(position_value, maxf(1.0, radius * 0.0035), Color(arm_color.r, arm_color.g, arm_color.b, 0.42), true)
+					_target.draw_line(previous, position_value, Color(arm_color.r, arm_color.g, arm_color.b, 0.13), maxf(1.0, radius * 0.0022), false)
+					_target.draw_circle(position_value, maxf(1.0, radius * 0.0035), Color(arm_color.r, arm_color.g, arm_color.b, 0.42), true)
 					previous = position_value
 
 		"aurora":
@@ -421,29 +545,29 @@ func _draw_cosmic_sky() -> void:
 					var y_ratio: float = -0.28 + float(band) * 0.16 + wave * 0.075
 					points.append(center + Vector2(x_ratio, y_ratio) * radius)
 				var band_color: Color = primary.lerp(secondary, float(band) / 3.0)
-				draw_polyline(points, Color(band_color.r, band_color.g, band_color.b, 0.14 + float(band) * 0.025), maxf(2.0, radius * 0.004), true)
+				_target.draw_polyline(points, Color(band_color.r, band_color.g, band_color.b, 0.14 + float(band) * 0.025), maxf(2.0, radius * 0.004), false)
 
 		"meteor":
 			var meteor_direction := Vector2(-0.88, 0.48).normalized()
 			for index in range(0, _cosmic_stars.size(), 4):
 				var head: Vector2 = _cosmic_star_position(_cosmic_stars[index], time_value, 1.8)
 				var length: float = radius * (0.035 + float(index % 5) * 0.012)
-				draw_line(head - meteor_direction * length, head, Color(accent.r, accent.g, accent.b, 0.34), maxf(1.0, radius * 0.0024), true)
+				_target.draw_line(head - meteor_direction * length, head, Color(accent.r, accent.g, accent.b, 0.34), maxf(1.0, radius * 0.0024), false)
 
 		"planetary":
 			for orbit_index in range(1, 5):
 				var orbit_radius: float = radius * (0.16 + float(orbit_index) * 0.13)
-				draw_arc(center, orbit_radius, 0.0, TAU, 96, Color(primary.r, primary.g, primary.b, 0.08 + float(orbit_index) * 0.012), maxf(1.0, radius * 0.0017), true)
+				_target.draw_arc(center, orbit_radius, 0.0, TAU, 40, Color(primary.r, primary.g, primary.b, 0.08 + float(orbit_index) * 0.012), maxf(1.0, radius * 0.0017), false)
 				var planet_angle: float = time_value * (0.035 / float(orbit_index)) + float(orbit_index) * 1.31
 				var planet_position: Vector2 = center + Vector2(cos(planet_angle), sin(planet_angle)) * orbit_radius
-				draw_circle(planet_position, radius * (0.008 + float(orbit_index) * 0.002), primary.lerp(accent, float(orbit_index) / 5.0), true)
+				_target.draw_circle(planet_position, radius * (0.008 + float(orbit_index) * 0.002), primary.lerp(accent, float(orbit_index) / 5.0), true)
 
 		"supernova":
 			for ray in range(20):
 				var angle: float = TAU * float(ray) / 20.0 + time_value * 0.018
 				var ray_length: float = radius * (0.20 + 0.10 * (0.5 + 0.5 * sin(time_value * 0.8 + float(ray))))
 				var direction := Vector2(cos(angle), sin(angle))
-				draw_line(center + direction * radius * 0.07, center + direction * ray_length, Color(primary.r, primary.g, primary.b, 0.14), maxf(1.0, radius * 0.002), true)
+				_target.draw_line(center + direction * radius * 0.07, center + direction * ray_length, Color(primary.r, primary.g, primary.b, 0.14), maxf(1.0, radius * 0.002), false)
 			_draw_soft_glow(center, radius * 0.18, accent, 0.16 + reaction * 0.10, 3)
 
 		"wormhole":
@@ -452,7 +576,7 @@ func _draw_cosmic_sky() -> void:
 				var wobble: float = sin(time_value * 0.35 + float(ring_index) * 0.71) * radius * 0.018
 				var ring_center: Vector2 = center + Vector2(wobble, -wobble * 0.55)
 				var ring_color: Color = primary.lerp(secondary, progress)
-				draw_arc(ring_center, radius * progress * 0.72, 0.0, TAU, 100, Color(ring_color.r, ring_color.g, ring_color.b, 0.05 + progress * 0.07), maxf(1.0, radius * 0.002), true)
+				_target.draw_arc(ring_center, radius * progress * 0.72, 0.0, TAU, 40, Color(ring_color.r, ring_color.g, ring_color.b, 0.05 + progress * 0.07), maxf(1.0, radius * 0.002), false)
 
 		"solar_crown":
 			var crown_radius: float = radius * (0.22 + _beat_pulse() * 0.012)
@@ -460,8 +584,8 @@ func _draw_cosmic_sky() -> void:
 			for ray in range(16):
 				var angle: float = TAU * float(ray) / 16.0 - time_value * 0.025
 				var direction := Vector2(cos(angle), sin(angle))
-				draw_line(center + direction * crown_radius, center + direction * crown_radius * 1.34, Color(accent.r, accent.g, accent.b, 0.20), maxf(1.0, radius * 0.0023), true)
-			draw_arc(center, crown_radius, 0.0, TAU, 120, Color(accent.r, accent.g, accent.b, 0.28), maxf(2.0, radius * 0.004), true)
+				_target.draw_line(center + direction * crown_radius, center + direction * crown_radius * 1.34, Color(accent.r, accent.g, accent.b, 0.20), maxf(1.0, radius * 0.0023), false)
+			_target.draw_arc(center, crown_radius, 0.0, TAU, 44, Color(accent.r, accent.g, accent.b, 0.28), maxf(2.0, radius * 0.004), false)
 
 		_:
 			# Deep space: o movimento fica somente na deriva estelar e nas
@@ -475,10 +599,10 @@ func _draw_cosmic_sky() -> void:
 		var twinkle: float = 0.5 + 0.5 * sin(time_value * (0.75 + star.z * 0.9) + star.w)
 		var star_color: Color = primary.lerp(Color.WHITE, 0.45 + star.z * 0.25)
 		var star_size: float = radius * (0.0018 + star.z * 0.0021 + twinkle * 0.0012)
-		draw_circle(position_value, maxf(1.0, star_size), Color(star_color.r, star_color.g, star_color.b, 0.30 + twinkle * 0.62), true)
+		_target.draw_circle(position_value, maxf(1.0, star_size), Color(star_color.r, star_color.g, star_color.b, 0.30 + twinkle * 0.62), true)
 		if twinkle > 0.82 and star.z > 0.45:
-			draw_line(position_value - Vector2(star_size * 2.2, 0.0), position_value + Vector2(star_size * 2.2, 0.0), Color(1.0, 1.0, 1.0, 0.18), maxf(1.0, star_size * 0.28), true)
-			draw_line(position_value - Vector2(0.0, star_size * 2.2), position_value + Vector2(0.0, star_size * 2.2), Color(1.0, 1.0, 1.0, 0.18), maxf(1.0, star_size * 0.28), true)
+			_target.draw_line(position_value - Vector2(star_size * 2.2, 0.0), position_value + Vector2(star_size * 2.2, 0.0), Color(1.0, 1.0, 1.0, 0.18), maxf(1.0, star_size * 0.28), false)
+			_target.draw_line(position_value - Vector2(0.0, star_size * 2.2), position_value + Vector2(0.0, star_size * 2.2), Color(1.0, 1.0, 1.0, 0.18), maxf(1.0, star_size * 0.28), false)
 
 
 ## Cada musica tem o SEU universo. Antes todas as telas desenhavam a
@@ -627,7 +751,7 @@ func _draw_universe_blade_shards(
 		var fade: float = sin(PI * phase)
 		blade_color.a = intensity * (0.46 + beat * 0.16 + reaction * 0.34) * fade
 
-		draw_colored_polygon(
+		_target.draw_colored_polygon(
 			PackedVector2Array([
 				middle - direction * span,
 				middle + normal * thickness,
@@ -638,12 +762,12 @@ func _draw_universe_blade_shards(
 		)
 
 		# Fio de luz no meio da lamina e estilhacos saltando do corte.
-		draw_line(
+		_target.draw_line(
 			middle - direction * span * 0.86,
 			middle + direction * span * 0.86,
 			Color(1.0, 1.0, 1.0, intensity * 0.28 * fade),
 			maxf(1.0, radius * 0.0016),
-			true
+			false
 		)
 
 		for shard in range(3):
@@ -701,29 +825,29 @@ func _draw_universe_ki_aura(
 				+ Vector2(cos(angle), sin(angle)) * minf(core + (length - core) * t, _universe_radius())
 			)
 		var tongue_color: Color = primary.lerp(accent, flicker * 0.60)
-		draw_polyline(
+		_target.draw_polyline(
 			points,
 			Color(tongue_color.r, tongue_color.g, tongue_color.b, intensity * (0.30 + flicker * 0.42)),
 			maxf(1.5, radius * (0.0022 + flicker * 0.0016)),
-			true
+			false
 		)
 
 	for shock in range(3):
 		var progress: float = fposmod(time_value * 0.32 + float(shock) / 3.0, 1.0)
 		var shock_radius: float = radius * (0.14 + progress * 0.66)
-		draw_arc(
+		_target.draw_arc(
 			center,
 			shock_radius,
 			0.0,
 			TAU,
-			72,
+			32,
 			Color(accent.r, accent.g, accent.b, intensity * (1.0 - progress) * 0.46),
 			maxf(1.5, radius * 0.0030 * (1.0 - progress * 0.5)),
-			true
+			false
 		)
 
-	draw_circle(center, core, Color(accent.r, accent.g, accent.b, intensity * 0.85), true)
-	draw_circle(center, core * 0.52, Color(1.0, 1.0, 1.0, intensity * 0.70), true)
+	_target.draw_circle(center, core, Color(accent.r, accent.g, accent.b, intensity * 0.85), true)
+	_target.draw_circle(center, core * 0.52, Color(1.0, 1.0, 1.0, intensity * 0.70), true)
 
 
 ## DEMON — respiracao. Faixas horizontais varrem o disco de baixo para
@@ -755,11 +879,11 @@ func _draw_universe_breath_waves(
 			var x: float = -half_width + 2.0 * half_width * t
 			var wave: float = sin(t * 6.8 + time_value * 1.15 + float(band) * 0.85)
 			crest.append(center + Vector2(x, y + wave * radius * 0.028))
-		draw_polyline(
+		_target.draw_polyline(
 			crest,
 			Color(band_color.r, band_color.g, band_color.b, alpha),
 			maxf(2.0, radius * 0.0040),
-			true
+			false
 		)
 
 		# Escamas: meio-arcos apoiados na crista, como agua quebrando.
@@ -768,7 +892,7 @@ func _draw_universe_breath_waves(
 			var x2: float = -half_width + 2.0 * half_width * t2
 			var wave2: float = sin(t2 * 6.8 + time_value * 1.15 + float(band) * 0.85)
 			var scale_position: Vector2 = center + Vector2(x2, y + wave2 * radius * 0.028)
-			draw_arc(
+			_target.draw_arc(
 				scale_position,
 				radius * 0.026,
 				PI,
@@ -776,7 +900,7 @@ func _draw_universe_breath_waves(
 				12,
 				Color(accent.r, accent.g, accent.b, alpha * 0.72),
 				maxf(1.5, radius * 0.0024),
-				true
+				false
 			)
 
 
@@ -815,13 +939,13 @@ func _draw_universe_rune_swarm(
 			4
 		)
 		sparkle.append(sparkle[0])
-		draw_polyline(
+		_target.draw_polyline(
 			sparkle,
 			Color(rune_color.r, rune_color.g, rune_color.b, alpha),
 			maxf(2.0, radius * 0.0038),
-			true
+			false
 		)
-		draw_arc(
+		_target.draw_arc(
 			rune_position,
 			radius * (0.058 + beat * 0.005),
 			angle,
@@ -829,7 +953,7 @@ func _draw_universe_rune_swarm(
 			20,
 			Color(accent.r, accent.g, accent.b, alpha * 0.66),
 			maxf(1.5, radius * 0.0026),
-			true
+			false
 		)
 
 	for mote in range(20):
@@ -843,7 +967,7 @@ func _draw_universe_rune_swarm(
 			* minf(mote_orbit + rise * radius * 0.10, _universe_radius())
 		)
 		var twinkle: float = 0.5 + 0.5 * sin(time_value * 2.6 + mote_seed)
-		draw_circle(
+		_target.draw_circle(
 			mote_position,
 			maxf(1.0, radius * (0.0018 + twinkle * 0.0016)),
 			Color(accent.r, accent.g, accent.b, intensity * (0.30 + twinkle * 0.55) * (1.0 - rise)),
@@ -872,11 +996,11 @@ func _draw_universe_spiral_seal(
 		var spiral_radius: float = radius * 0.055 + t * _universe_radius() * 0.76
 		spiral.append(center + Vector2(cos(angle), sin(angle)) * spiral_radius)
 
-	draw_polyline(
+	_target.draw_polyline(
 		spiral,
 		Color(primary.r, primary.g, primary.b, intensity * (0.42 + reaction * 0.34)),
 		maxf(2.0, radius * 0.0052 * (1.0 + beat * 0.20)),
-		true
+		false
 	)
 
 	# Segunda espiral, oposta e mais fina, dando profundidade ao redemoinho.
@@ -886,34 +1010,34 @@ func _draw_universe_spiral_seal(
 		var angle2: float = -rotation * 0.55 - t2 * TAU * (turns * 0.70) + PI
 		var counter_radius: float = radius * 0.10 + t2 * _universe_radius() * 0.62
 		counter.append(center + Vector2(cos(angle2), sin(angle2)) * counter_radius)
-	draw_polyline(
+	_target.draw_polyline(
 		counter,
 		Color(accent.r, accent.g, accent.b, intensity * 0.30),
 		maxf(1.0, radius * 0.0026),
-		true
+		false
 	)
 
 	var seal_radius: float = _universe_radius() * 0.92
-	draw_arc(
+	_target.draw_arc(
 		center,
 		seal_radius,
 		0.0,
 		TAU,
-		120,
+		44,
 		Color(accent.r, accent.g, accent.b, intensity * (0.34 + beat * 0.10)),
 		maxf(1.5, radius * 0.0032),
-		true
+		false
 	)
 	for tick in range(24):
 		var tick_angle: float = -rotation * 0.32 + TAU * float(tick) / 24.0
 		var tick_direction := Vector2(cos(tick_angle), sin(tick_angle))
 		var tick_length: float = radius * (0.040 if tick % 3 == 0 else 0.020)
-		draw_line(
+		_target.draw_line(
 			center + tick_direction * seal_radius,
 			center + tick_direction * (seal_radius - tick_length),
 			Color(primary.r, primary.g, primary.b, intensity * (0.46 if tick % 3 == 0 else 0.24)),
 			maxf(1.5, radius * 0.0026),
-			true
+			false
 		)
 
 
@@ -937,12 +1061,12 @@ func _draw_universe_portal_lab(
 		var column_half: float = _chord_half(absf(x))
 		if column_half <= 1.0:
 			continue
-		draw_line(
+		_target.draw_line(
 			center + Vector2(x, -column_half),
 			center + Vector2(x, column_half),
 			Color(primary.r, primary.g, primary.b, intensity * (0.20 + beat * 0.06)),
 			maxf(1.0, radius * 0.0018),
-			true
+			false
 		)
 
 	for row in range(-5, 6):
@@ -950,12 +1074,12 @@ func _draw_universe_portal_lab(
 		var row_half: float = _chord_half(absf(y))
 		if row_half <= 1.0:
 			continue
-		draw_line(
+		_target.draw_line(
 			center + Vector2(-row_half, y),
 			center + Vector2(row_half, y),
 			Color(secondary.r, secondary.g, secondary.b, intensity * 0.14),
 			maxf(1.0, radius * 0.0016),
-			true
+			false
 		)
 
 	# Portal: elipse com redemoinho interno e borda mais viva.
@@ -974,11 +1098,11 @@ func _draw_universe_portal_lab(
 					sin(angle) * portal_size.y * scale_value
 				)
 			)
-		draw_polyline(
+		_target.draw_polyline(
 			ellipse,
 			Color(accent.r, accent.g, accent.b, intensity * (0.50 - float(layer) * 0.12)),
 			maxf(1.5, radius * (0.0034 - float(layer) * 0.0008)),
-			true
+			false
 		)
 
 	var swirl := PackedVector2Array()
@@ -992,11 +1116,11 @@ func _draw_universe_portal_lab(
 				sin(angle2) * portal_size.y * (1.0 - t) * 0.90
 			)
 		)
-	draw_polyline(
+	_target.draw_polyline(
 		swirl,
 		Color(primary.r, primary.g, primary.b, intensity * 0.55),
 		maxf(1.5, radius * 0.0030),
-		true
+		false
 	)
 
 
@@ -1050,25 +1174,25 @@ func _draw_universe_moon_hive(
 	)
 	var moon_radius: float = _universe_radius() * 0.30
 	var swing: float = sin(time_value * 0.28) * 0.16
-	draw_arc(
+	_target.draw_arc(
 		moon_center,
 		moon_radius,
 		-PI * 0.62 + swing,
 		PI * 0.62 + swing,
-		48,
+		28,
 		Color(accent.r, accent.g, accent.b, intensity * (0.62 + beat * 0.14)),
 		maxf(2.0, radius * 0.0048),
-		true
+		false
 	)
-	draw_arc(
+	_target.draw_arc(
 		moon_center + Vector2(moon_radius * 0.42, 0.0),
 		moon_radius * 0.92,
 		-PI * 0.52 + swing,
 		PI * 0.52 + swing,
-		42,
+		26,
 		Color(accent.r, accent.g, accent.b, intensity * 0.40),
 		maxf(1.5, radius * 0.0034),
-		true
+		false
 	)
 
 
@@ -1111,12 +1235,12 @@ func _draw_universe_prism_field(
 			),
 			maxf(1.5, radius * 0.0028)
 		)
-		draw_line(
+		_target.draw_line(
 			prism_position - Vector2(cos(lane_angle), sin(lane_angle)) * size * 2.2,
 			prism_position,
 			Color(prism_color.r, prism_color.g, prism_color.b, intensity * 0.20 * fade),
 			maxf(1.0, radius * 0.0018),
-			true
+			false
 		)
 
 
@@ -1140,7 +1264,7 @@ func _draw_universe_prism_field(
 ## corre, entao a mesma tecnica entrega leituras diferentes: a aura do
 ## dragon ball cospe faisca, a espiral do naruto arrasta tudo em
 ## redemoinho, o favo do soul quase nao se mexe.
-const DUST_COUNT: int = 30
+const DUST_COUNT: int = 20
 const COMET_COUNT: int = 2
 
 
@@ -1223,12 +1347,12 @@ func _draw_ambient_particles() -> void:
 		)
 		var alpha: float = fade * (0.20 + depth * 0.66)
 
-		draw_line(
+		_target.draw_line(
 			trail_position,
 			position_value,
 			Color(particle_color.r, particle_color.g, particle_color.b, alpha * 0.45),
 			maxf(1.0, size * 0.80),
-			true
+			false
 		)
 
 		# Halo so nas particulas da frente: nas do fundo ele nao apareceria
@@ -1242,14 +1366,14 @@ func _draw_ambient_particles() -> void:
 				2
 			)
 
-		draw_circle(
+		_target.draw_circle(
 			position_value,
 			maxf(1.0, size),
 			Color(particle_color.r, particle_color.g, particle_color.b, alpha * (0.55 + twinkle * 0.45)),
 			true
 		)
 		if depth > 0.50:
-			draw_circle(
+			_target.draw_circle(
 				position_value,
 				maxf(1.0, size * 0.42),
 				Color(1.0, 1.0, 1.0, alpha * (0.40 + twinkle * 0.50)),
@@ -1285,21 +1409,21 @@ func _draw_comets(time_value: float, limit: float) -> void:
 		var tail: Vector2 = start_point.lerp(end_point, maxf(progress - 0.14, 0.0))
 		var fade: float = sin(PI * progress)
 
-		draw_line(
+		_target.draw_line(
 			tail,
 			head,
 			Color(accent.r, accent.g, accent.b, fade * 0.30),
 			maxf(1.0, radius * 0.0030),
-			true
+			false
 		)
-		draw_line(
+		_target.draw_line(
 			tail.lerp(head, 0.55),
 			head,
 			Color(1.0, 1.0, 1.0, fade * 0.62),
 			maxf(1.0, radius * 0.0018),
-			true
+			false
 		)
-		draw_circle(head, maxf(1.0, radius * 0.0030), Color(1.0, 1.0, 1.0, fade * 0.85), true)
+		_target.draw_circle(head, maxf(1.0, radius * 0.0030), Color(1.0, 1.0, 1.0, fade * 0.85), true)
 
 func _draw_ring() -> void:
 	var ring_radius: float = radius * 0.905
@@ -1311,22 +1435,22 @@ func _draw_ring() -> void:
 	var primary: Color = _primary()
 	var reaction: float = _hit_energy + _combo_energy * 0.26
 
-	draw_arc(
+	_target.draw_arc(
 		center,
 		ring_radius + radius * 0.004,
 		0.0,
 		TAU,
-		160,
+		56,
 		Color(primary.r, primary.g, primary.b, 0.10 + pulse * 0.05 + reaction * 0.12),
 		width * (3.4 + reaction * 1.6),
 		true
 	)
-	draw_arc(
+	_target.draw_arc(
 		center,
 		ring_radius,
 		0.0,
 		TAU,
-		160,
+		56,
 		Color.WHITE,
 		width,
 		true
@@ -1344,7 +1468,7 @@ func _draw_ring() -> void:
 		var flash_mix: float = minf(flash, 1.0)
 
 		var glow_color: Color = primary.lerp(flash_color, flash_mix)
-		draw_circle(
+		_target.draw_circle(
 			position_value,
 			marker_radius * (1.75 + lane_pulse * 0.55 + flash * 0.90),
 			Color(glow_color.r, glow_color.g, glow_color.b, 0.08 + lane_pulse * 0.18 + flash_mix * 0.52),
@@ -1356,8 +1480,8 @@ func _draw_ring() -> void:
 
 		# Miolo escuro + anel branco grosso: leitura de "alvo", bem
 		# mais definida que um disco branco chapado.
-		draw_circle(position_value, core_size, Color(0.010, 0.016, 0.030, 0.92), true)
-		draw_arc(
+		_target.draw_circle(position_value, core_size, Color(0.010, 0.016, 0.030, 0.92), true)
+		_target.draw_arc(
 			position_value,
 			core_size * 0.80,
 			0.0,
@@ -1367,7 +1491,7 @@ func _draw_ring() -> void:
 			maxf(2.0, core_size * 0.34),
 			true
 		)
-		draw_circle(position_value, core_size * 0.26, core_color, true)
+		_target.draw_circle(position_value, core_size * 0.26, core_color, true)
 
 		if flash > 0.02:
 			# Arco de energia correndo pela linha, saindo do ponto
@@ -1375,7 +1499,7 @@ func _draw_ring() -> void:
 			# fica na propria linha, nao so num flash central.
 			var arc_span: float = deg_to_rad(9.0 + flash * 30.0)
 			var base_angle: float = (position_value - center).angle()
-			draw_arc(
+			_target.draw_arc(
 				center,
 				ring_radius,
 				base_angle - arc_span,
@@ -1417,7 +1541,7 @@ func _draw_ring_pulses() -> void:
 			var trail_span: float = minf(travel, PI * 0.34)
 			var trail_from: float = head_angle - trail_span * direction_sign
 
-			draw_arc(
+			_target.draw_arc(
 				center,
 				ring_radius,
 				minf(trail_from, head_angle),
@@ -1435,7 +1559,7 @@ func _draw_ring_pulses() -> void:
 				lerpf(1.0, color.b, 0.82),
 				fade
 			)
-			draw_arc(
+			_target.draw_arc(
 				center,
 				ring_radius,
 				head_angle - head_span,
@@ -1477,7 +1601,7 @@ func _draw_lane_energy() -> void:
 		# Tap e hold usam a mesma regra de cor: a do proprio objeto.
 		var color: Color = TAP_PALETTE.color_for_index(int(event.get("color_index", 0)))
 		var size: float = radius * (0.028 + progress * 0.032)
-		draw_arc(
+		_target.draw_arc(
 			position_value,
 			size,
 			-PI * 0.5,
@@ -1591,7 +1715,7 @@ func _draw_hold_ribbon(
 
 	# Halo largo e suave em vez de contorno grosso: da presenca sem
 	# engordar a forma.
-	draw_line(
+	_target.draw_line(
 		tail,
 		head,
 		Color(color.r, color.g, color.b, (0.16 if active else 0.09) * fade),
@@ -1599,7 +1723,7 @@ func _draw_hold_ribbon(
 		true
 	)
 	# Corpo fino.
-	draw_line(
+	_target.draw_line(
 		tail,
 		head,
 		Color(color.r, color.g, color.b, (0.62 if active else 0.40) * fade),
@@ -1607,7 +1731,7 @@ func _draw_hold_ribbon(
 		true
 	)
 	# Nucleo claro, bem estreito — e o que da a leitura "nitida".
-	draw_line(
+	_target.draw_line(
 		tail,
 		head,
 		Color(highlight.r, highlight.g, highlight.b, (0.95 if active else 0.62) * fade),
@@ -1625,7 +1749,7 @@ func _draw_hold_ribbon(
 		var pulse_head: Vector2 = tail.lerp(head, travel)
 		var pulse_tail: Vector2 = pulse_head - direction * span
 		var alpha: float = sin(PI * travel) * (0.85 if active else 0.40) * fade
-		draw_line(
+		_target.draw_line(
 			pulse_tail,
 			pulse_head,
 			Color(1.0, 1.0, 1.0, alpha),
@@ -1639,7 +1763,7 @@ func _draw_hold_ribbon(
 		var t: float = float(index) / 3.0
 		var from: Vector2 = tail + direction * length * t * 0.10
 		var to: Vector2 = tail + direction * length * (t + 0.33) * 0.10
-		draw_line(
+		_target.draw_line(
 			from,
 			to,
 			Color(color.r, color.g, color.b, (0.10 + t * 0.22) * fade),
@@ -1666,7 +1790,7 @@ func _draw_hold_target(
 	var size: float = half_width * (1.75 + pulse * (0.12 if active else 0.04))
 
 	_draw_soft_glow(head, size * 1.7, color, (0.30 if active else 0.16) * fade, 3)
-	draw_arc(
+	_target.draw_arc(
 		head,
 		size,
 		0.0,
@@ -1679,7 +1803,7 @@ func _draw_hold_target(
 
 	var shown: float = progress if progress > 0.0 else 1.0
 	if shown > 0.001:
-		draw_arc(
+		_target.draw_arc(
 			head,
 			size,
 			-PI * 0.5,
@@ -1690,7 +1814,7 @@ func _draw_hold_target(
 			true
 		)
 
-	draw_circle(
+	_target.draw_circle(
 		head,
 		size * 0.26,
 		Color(highlight.r, highlight.g, highlight.b, (0.95 if active else 0.55) * fade),
@@ -1827,14 +1951,14 @@ func _draw_slide_rail(
 	if appear <= 0.02:
 		return
 	for index in range(points.size() - 1):
-		draw_line(
+		_target.draw_line(
 			points[index],
 			points[index + 1],
 			Color(0.0, 0.0, 0.0, 0.76 * appear),
 			maxf(8.0, radius * 0.026),
 			true
 		)
-		draw_line(
+		_target.draw_line(
 			points[index],
 			points[index + 1],
 			Color(color.r, color.g, color.b, 0.16 * appear),
@@ -1956,7 +2080,7 @@ func _draw_arrow_chevron(
 		inner + perpendicular * half_height * 0.22,
 		tip - tangent * length * 0.10,
 	])
-	draw_polyline(
+	_target.draw_polyline(
 		highlight,
 		TAP_PALETTE.highlight(color),
 		maxf(2.0, size * 0.075),
@@ -1988,7 +2112,7 @@ func _draw_arrow_dart(
 
 	_fill_arrow_polygon(polygon, color, size)
 
-	draw_line(
+	_target.draw_line(
 		rear + tangent * size * 0.10,
 		tip - tangent * size * 0.30,
 		TAP_PALETTE.highlight(color),
@@ -2015,20 +2139,20 @@ func _draw_arrow_double(
 		var right: Vector2 = position_value + offset - tangent * size * 0.42 - perpendicular * half_height
 		var stroke := PackedVector2Array([left, tip, right])
 
-		draw_polyline(
+		_target.draw_polyline(
 			stroke,
 			Color(0.0, 0.0, 0.0, 0.92),
 			maxf(6.0, size * 0.46),
 			true
 		)
-		draw_polyline(
+		_target.draw_polyline(
 			stroke,
 			Color(color.r, color.g, color.b, color.a),
 			maxf(3.5, size * 0.30),
 			true
 		)
 		if wing == 0:
-			draw_polyline(
+			_target.draw_polyline(
 				stroke,
 				Color(highlight_color.r, highlight_color.g, highlight_color.b, 0.85),
 				maxf(1.5, size * 0.10),
@@ -2060,14 +2184,14 @@ func _draw_arrow_feather(
 	])
 	_fill_arrow_polygon(head, color, size)
 
-	draw_line(
+	_target.draw_line(
 		rear,
 		neck,
 		Color(0.0, 0.0, 0.0, 0.92),
 		maxf(5.0, size * 0.40),
 		true
 	)
-	draw_line(
+	_target.draw_line(
 		rear,
 		neck,
 		color,
@@ -2077,7 +2201,7 @@ func _draw_arrow_feather(
 
 	var highlight_color: Color = TAP_PALETTE.highlight(color)
 	for side in [-1.0, 1.0]:
-		draw_line(
+		_target.draw_line(
 			rear + perpendicular * half_height * 0.55 * side,
 			rear + tangent * size * 0.58,
 			Color(highlight_color.r, highlight_color.g, highlight_color.b, 0.90),
@@ -2098,13 +2222,13 @@ func _fill_arrow_polygon(
 	for point in polygon:
 		shadow.append(point + shadow_offset)
 
-	draw_colored_polygon(shadow, Color(0.0, 0.0, 0.0, 0.96))
-	draw_colored_polygon(polygon, color)
+	_target.draw_colored_polygon(shadow, Color(0.0, 0.0, 0.0, 0.96))
+	_target.draw_colored_polygon(polygon, color)
 
 	var outline := polygon.duplicate()
 	outline.append(outline[0])
 	var outline_color: Color = TAP_PALETTE.shade(color)
-	draw_polyline(
+	_target.draw_polyline(
 		outline,
 		Color(outline_color.r, outline_color.g, outline_color.b, 0.98),
 		maxf(5.0, size * 0.19),
@@ -2177,13 +2301,13 @@ func _draw_star(
 	# vez de so linhas finas sobre o fundo.
 	_draw_soft_glow(position_value, size * 1.55, color, 0.34 + pulse * 0.12, 3)
 
-	draw_polyline(outer, Color(0.0, 0.0, 0.0, 0.90), maxf(12.0, size * 0.30), true)
-	draw_polyline(outer, Color.WHITE, maxf(7.0, size * 0.16), true)
+	_target.draw_polyline(outer, Color(0.0, 0.0, 0.0, 0.90), maxf(12.0, size * 0.30), true)
+	_target.draw_polyline(outer, Color.WHITE, maxf(7.0, size * 0.16), true)
 	# Com apenas quatro pontas os aneis internos ficam grudados no
 	# contorno; a de 4 pontas leva so um anel de reforco.
 	if resolved_style != 2:
-		draw_polyline(middle, color, maxf(5.0, size * 0.13), true)
-	draw_polyline(inner, accent, maxf(3.5, size * 0.10), true)
+		_target.draw_polyline(middle, color, maxf(5.0, size * 0.13), true)
+	_target.draw_polyline(inner, accent, maxf(3.5, size * 0.10), true)
 
 	# Detalhe exclusivo de cada variacao, ainda na cor do objeto.
 	match resolved_style:
@@ -2192,7 +2316,7 @@ func _draw_star(
 			for axis in range(3):
 				var axis_angle: float = rotation_value + PI * float(axis) / 3.0
 				var axis_dir := Vector2(cos(axis_angle), sin(axis_angle))
-				draw_line(
+				_target.draw_line(
 					position_value - axis_dir * size * 0.62,
 					position_value + axis_dir * size * 0.62,
 					Color(accent.r, accent.g, accent.b, 0.55),
@@ -2206,7 +2330,7 @@ func _draw_star(
 			for axis in range(2):
 				var flare_angle: float = rotation_value - PI * 0.5 + PI * float(axis) * 0.5
 				var flare_dir := Vector2(cos(flare_angle), sin(flare_angle))
-				draw_line(
+				_target.draw_line(
 					position_value - flare_dir * size * 1.18,
 					position_value + flare_dir * size * 1.18,
 					Color(accent.r, accent.g, accent.b, 0.34 + pulse * 0.16),
@@ -2215,7 +2339,7 @@ func _draw_star(
 				)
 		3:
 			# Explosao: anel fino amarrando as oito pontas.
-			draw_arc(
+			_target.draw_arc(
 				position_value,
 				size * inner_ratio * 1.06,
 				0.0,
@@ -2226,9 +2350,9 @@ func _draw_star(
 				true
 			)
 
-	draw_circle(position_value, size * 0.18, Color(0.002, 0.006, 0.016, 0.96), true)
-	draw_circle(position_value, size * 0.10, Color.WHITE, true)
-	draw_circle(position_value, size * 0.045, accent, true)
+	_target.draw_circle(position_value, size * 0.18, Color(0.002, 0.006, 0.016, 0.96), true)
+	_target.draw_circle(position_value, size * 0.10, Color.WHITE, true)
+	_target.draw_circle(position_value, size * 0.045, accent, true)
 
 
 func _draw_effects() -> void:
@@ -2280,7 +2404,7 @@ func _draw_tap_prism(
 		0.055 + progress * 0.190
 	)
 	_draw_soft_glow(position_value, flash_radius * 1.9, color, life * 0.55, 4)
-	draw_circle(
+	_target.draw_circle(
 		position_value,
 		flash_radius,
 		Color(1.0, 1.0, 1.0, life * 0.30),
@@ -2396,7 +2520,7 @@ func _draw_slide_burst(
 			spikes
 		)
 		points.append(points[0])
-		draw_polyline(
+		_target.draw_polyline(
 			points,
 			Color(color.r, color.g, color.b, life * (0.96 - float(layer) * 0.16)),
 			maxf(3.0, radius * (0.010 - float(layer) * 0.0012)),
@@ -2438,14 +2562,14 @@ func _draw_hold_burst(
 		if direction_in.length_squared() > 0.001:
 			var beam_length: float = radius * 0.085 * handoff
 			var highlight: Color = TAP_PALETTE.highlight(color)
-			draw_line(
+			_target.draw_line(
 				position_value - direction_in * beam_length,
 				position_value,
 				Color(color.r, color.g, color.b, handoff * 0.55),
 				maxf(2.0, radius * 0.010),
 				true
 			)
-			draw_line(
+			_target.draw_line(
 				position_value - direction_in * beam_length,
 				position_value,
 				Color(highlight.r, highlight.g, highlight.b, handoff * 0.85),
@@ -2506,7 +2630,7 @@ func _draw_hold_burst(
 			maxf(2.5, radius * 0.0065)
 		)
 
-	draw_circle(
+	_target.draw_circle(
 		position_value,
 		radius * (0.038 + progress * 0.045),
 		Color(1.0, 1.0, 1.0, life * 0.74),
@@ -2522,21 +2646,21 @@ func _draw_miss_burst(
 	var size: float = radius * (0.040 + progress * 0.095)
 	var a: Vector2 = Vector2(cos(rotation_value), sin(rotation_value)) * size
 	var b: Vector2 = Vector2(-a.y, a.x)
-	draw_line(
+	_target.draw_line(
 		position_value - a,
 		position_value + a,
 		Color(1.0, 0.08, 0.13, life),
 		maxf(4.0, radius * 0.012),
 		true
 	)
-	draw_line(
+	_target.draw_line(
 		position_value - b,
 		position_value + b,
 		Color(1.0, 0.08, 0.13, life),
 		maxf(4.0, radius * 0.012),
 		true
 	)
-	draw_arc(
+	_target.draw_arc(
 		position_value,
 		size * 1.18,
 		0.0,
@@ -2553,13 +2677,13 @@ func _draw_pointer(position_value: Vector2) -> void:
 	var pulse: float = 0.5 + 0.5 * sin(float(Time.get_ticks_msec()) * 0.025)
 	var outer_radius: float = radius * (0.044 + pulse * 0.006)
 
-	draw_circle(
+	_target.draw_circle(
 		position_value,
 		outer_radius * 1.28,
 		Color(color.r, color.g, color.b, 0.09),
 		true
 	)
-	draw_arc(
+	_target.draw_arc(
 		position_value,
 		outer_radius,
 		0.0,
@@ -2569,7 +2693,7 @@ func _draw_pointer(position_value: Vector2) -> void:
 		maxf(2.0, radius * 0.0045),
 		true
 	)
-	draw_arc(
+	_target.draw_arc(
 		position_value,
 		outer_radius * 0.70,
 		-PI * 0.5,
@@ -2585,7 +2709,7 @@ func _draw_pointer(position_value: Vector2) -> void:
 		var direction := Vector2(cos(angle), sin(angle))
 		var side := Vector2(-direction.y, direction.x)
 		var corner: Vector2 = position_value + direction * outer_radius * 1.20
-		draw_line(
+		_target.draw_line(
 			corner - side * outer_radius * 0.20,
 			corner + side * outer_radius * 0.20,
 			Color(color.r, color.g, color.b, 0.75),
@@ -2603,20 +2727,26 @@ func _draw_soft_glow(
 	radius_value: float,
 	color: Color,
 	alpha: float,
-	layers: int = 4
+	_layers: int = 4
 ) -> void:
 	if radius_value <= 0.0 or alpha <= 0.0:
 		return
-	for layer in range(layers):
-		var t: float = float(layer) / float(maxi(layers - 1, 1))
-		var layer_radius: float = radius_value * (1.0 - t * 0.72)
-		var layer_alpha: float = alpha * (0.16 + (1.0 - t) * 0.56)
-		draw_circle(
-			position_value,
-			layer_radius,
-			Color(color.r, color.g, color.b, layer_alpha),
-			true
-		)
+	if _glow_texture == null:
+		_glow_texture = _build_glow_texture()
+
+	# O parametro de camadas ficou sem uso (a textura ja tem o degrade
+	# inteiro) mas continua na assinatura para nao quebrar as ~18
+	# chamadas espalhadas pelo arquivo.
+	var diameter: float = radius_value * 2.0
+	_target.draw_texture_rect(
+		_glow_texture,
+		Rect2(
+			position_value - Vector2(radius_value, radius_value),
+			Vector2(diameter, diameter)
+		),
+		false,
+		Color(color.r, color.g, color.b, clampf(alpha * 0.92, 0.0, 1.0))
+	)
 
 
 func _draw_diamond(
@@ -2632,7 +2762,7 @@ func _draw_diamond(
 		position_value + Vector2(-size, 0.0),
 		position_value + Vector2(0.0, -size),
 	])
-	draw_polyline(points, color, width, true)
+	_target.draw_polyline(points, color, width, true)
 
 
 func _draw_rotated_diamond(
@@ -2646,7 +2776,7 @@ func _draw_rotated_diamond(
 	for index in range(5):
 		var angle: float = rotation_value - PI * 0.5 + float(index) * PI * 0.5
 		points.append(position_value + Vector2(cos(angle), sin(angle)) * size)
-	draw_polyline(points, color, width, true)
+	_target.draw_polyline(points, color, width, true)
 
 
 func _draw_regular_polygon(
@@ -2661,7 +2791,7 @@ func _draw_regular_polygon(
 	for index in range(sides + 1):
 		var angle: float = rotation_value + TAU * float(index) / float(sides)
 		points.append(position_value + Vector2(cos(angle), sin(angle)) * size)
-	draw_polyline(points, color, width, true)
+	_target.draw_polyline(points, color, width, true)
 
 
 func _star_points(
