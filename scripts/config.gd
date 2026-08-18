@@ -74,7 +74,13 @@ var _music_detail: Label
 var _music_hint: Label
 var _music_rows: Array[Panel] = []
 var _music_labels: Array[Label] = []
+var _music_row_indices: Array[int] = []
 var _usb_packages: Array = []
+
+# Botão VOLTAR dedicado ao touch nas telas internas.
+var _touch_layer: CanvasLayer
+var _touch_back_panel: Panel
+var _touch_back_label: Label
 var _music_cursor: int = 0
 var _music_scan_busy: bool = false
 
@@ -118,6 +124,7 @@ func _ready() -> void:
 	_build_music_view()
 	_build_test_view()
 	_build_counters_view()
+	_build_touch_back()
 	_ensure_bpm_analyzer()
 
 	_refresh_menu_texts()
@@ -160,12 +167,135 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if not (event is InputEventKey and event.pressed and not event.echo):
+	if event is InputEventKey:
+		var key := event as InputEventKey
+		if key.pressed and not key.echo:
+			if (
+				key.keycode == KEY_F9
+				or key.keycode == KEY_ESCAPE
+				or key.keycode == KEY_BACKSPACE
+			):
+				_handle_back()
 		return
 
-	var key := event as InputEventKey
-	if key.keycode == KEY_F9 or key.keycode == KEY_ESCAPE or key.keycode == KEY_BACKSPACE:
+	# Touch funciona mesmo com o cursor escondido.
+	if event is InputEventScreenTouch:
+		var touch := event as InputEventScreenTouch
+		if touch.pressed:
+			_handle_touch(touch.position)
+		return
+
+	# Alguns controladores touch do Windows chegam como clique esquerdo.
+	# Mantemos o mouse HIDDEN, mas aceitamos o evento.
+	if event is InputEventMouseButton:
+		var mouse := event as InputEventMouseButton
+		if mouse.pressed and mouse.button_index == MOUSE_BUTTON_LEFT:
+			_handle_touch(mouse.position)
+
+
+func _handle_touch(position_value: Vector2) -> void:
+	# VOLTAR é sempre a primeira zona testada nas telas internas.
+	if (
+		_touch_back_panel != null
+		and is_instance_valid(_touch_back_panel)
+		and _touch_back_panel.visible
+		and Rect2(
+			_touch_back_panel.global_position,
+			_touch_back_panel.size
+		).has_point(position_value)
+	):
 		_handle_back()
+		return
+
+	if _bpm_analysis_active:
+		return
+
+	if _in_music_view:
+		for slot in range(_music_rows.size()):
+			var row: Panel = _music_rows[slot]
+			if not row.visible:
+				continue
+			if not Rect2(row.global_position, row.size).has_point(position_value):
+				continue
+
+			if slot >= _music_row_indices.size():
+				return
+
+			var package_index: int = _music_row_indices[slot]
+			if package_index < 0 or package_index >= _usb_packages.size():
+				return
+
+			# Primeiro toque seleciona. Tocar novamente na selecionada
+			# equivale ao B e instala (ou informa que já está instalada).
+			if package_index == _music_cursor:
+				_activate_music_cursor()
+			else:
+				_music_cursor = package_index
+				_refresh_music_view()
+				_menu_feedback("menu_next_feedback")
+			return
+		return
+
+	if _in_test_view or _in_counters_view:
+		return
+
+	# Menu principal do F9: tocar uma linha ativa diretamente a opção.
+	for index in range(_menu_rows.size()):
+		var row: Panel = _menu_rows[index]
+		if Rect2(row.global_position, row.size).has_point(position_value):
+			_cursor = index
+			_refresh_menu_texts()
+			_activate_cursor()
+			return
+
+
+func _build_touch_back() -> void:
+	_touch_layer = CanvasLayer.new()
+	_touch_layer.layer = 50
+	add_child(_touch_layer)
+
+	var font: Font = _load_font()
+
+	_touch_back_panel = Panel.new()
+	_touch_back_panel.visible = false
+	_touch_back_panel.position = Vector2(
+		_center.x - _radius * 0.27,
+		_center.y + _radius * 0.835
+	)
+	_touch_back_panel.size = Vector2(
+		_radius * 0.54,
+		_radius * 0.090
+	)
+	_touch_back_panel.clip_contents = true
+	_touch_back_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_touch_back_panel.add_theme_stylebox_override(
+		"panel",
+		_row_style(false)
+	)
+	_touch_layer.add_child(_touch_back_panel)
+
+	_touch_back_label = _make_label(
+		"VOLTAR",
+		int(_radius * 0.030),
+		HORIZONTAL_ALIGNMENT_CENTER,
+		font
+	)
+	_touch_back_label.size = _touch_back_panel.size
+	_touch_back_label.add_theme_color_override(
+		"font_color",
+		Color(0.85, 0.92, 1.0, 1.0)
+	)
+	_touch_back_panel.add_child(_touch_back_label)
+	_fit_label_to_width(
+		_touch_back_label,
+		int(_radius * 0.030),
+		10
+	)
+
+
+func _set_touch_back_visible(value: bool) -> void:
+	if _touch_back_panel != null and is_instance_valid(_touch_back_panel):
+		_touch_back_panel.visible = value
 
 
 func _notification(what: int) -> void:
@@ -647,7 +777,7 @@ func _build_music_view() -> void:
 	_music_panel.add_child(_music_detail)
 
 	_music_hint = _make_label(
-		"A ↑   E ↓   B IMPORTA / REESCANEIA   •   SELECT/F9 VOLTA",
+		"A ↑   E ↓   B IMPORTA   •   TOQUE 2X INSTALA   •   VOLTAR",
 		int(_radius * 0.021),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
@@ -664,6 +794,7 @@ func _open_music_view() -> void:
 	_in_music_view = true
 	_panel.visible = false
 	_music_layer.visible = true
+	_set_touch_back_visible(true)
 	Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
 
 	_set_top_context(
@@ -679,6 +810,7 @@ func _close_music_view() -> void:
 	_in_music_view = false
 	_music_layer.visible = false
 	_panel.visible = true
+	_set_touch_back_visible(false)
 	Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
 	_refresh_menu_texts()
 	_set_main_top_context()
@@ -733,6 +865,21 @@ func _activate_music_cursor() -> void:
 		_music_status.text = "PACOTE INVÁLIDO: " + str(package.get("error", ""))
 		return
 
+	if bool(package.get("installed", false)):
+		var existing: Dictionary = package.get("installed_match", {}) as Dictionary
+		_music_status.add_theme_color_override(
+			"font_color",
+			Color(0.32, 1.0, 0.62, 1.0)
+		)
+		_music_status.text = "JÁ INSTALADA: %s" % str(
+			existing.get("title", package.get("name", ""))
+		)
+		_music_detail.text = "%s   •   %s" % [
+			str(existing.get("source", "INSTALADA")),
+			str(existing.get("reason", "DUPLICADA")),
+		]
+		return
+
 	var bpm: float = float(package.get("bpm", 0.0))
 	if bpm >= 40.0 and bpm <= 260.0:
 		_import_package(package, bpm)
@@ -745,6 +892,7 @@ func _refresh_music_view() -> void:
 	var count: int = _usb_packages.size()
 
 	if count == 0:
+		_music_row_indices.clear()
 		_music_status.text = "NENHUM PACOTE ENCONTRADO — B PARA REESCANEAR"
 		_music_status.add_theme_color_override("font_color", Color(1.0, 0.72, 0.30, 1.0))
 		_music_detail.text = (
@@ -759,13 +907,23 @@ func _refresh_music_view() -> void:
 	for row in _music_rows:
 		row.visible = true
 
-	_music_status.text = "%d PACOTE(S) ENCONTRADO(S)   •   %d INSTALADA(S)" % [
-		count,
-		USER_CATALOG.all_user_songs().size(),
+	var usb_installed: int = 0
+	for package_value in _usb_packages:
+		if package_value is Dictionary and bool((package_value as Dictionary).get("installed", false)):
+			usb_installed += 1
+
+	var new_count: int = count - usb_installed
+	_music_status.text = "%d NOVA(S)   •   %d JÁ INSTALADA(S)" % [
+		new_count,
+		usb_installed,
 	]
 	_music_status.add_theme_color_override("font_color", Color(0.32, 1.0, 0.62, 1.0))
 
 	var visible_count: int = _music_labels.size()
+	_music_row_indices.clear()
+	for _slot in range(visible_count):
+		_music_row_indices.append(-1)
+
 	var first: int = clampi(
 		_music_cursor - int(visible_count / 2),
 		0,
@@ -776,10 +934,14 @@ func _refresh_music_view() -> void:
 		var index: int = first + slot
 		if index >= count:
 			_music_rows[slot].visible = false
+			_music_row_indices[slot] = -1
 			continue
+
+		_music_row_indices[slot] = index
 
 		var package: Dictionary = _usb_packages[index]
 		var valid: bool = bool(package.get("valid", false))
+		var installed: bool = bool(package.get("installed", false))
 		var bpm: float = float(package.get("bpm", 0.0))
 		var bpm_text: String = (
 			"%d BPM" % roundi(bpm)
@@ -790,7 +952,11 @@ func _refresh_music_view() -> void:
 		_music_labels[slot].text = "%s   •   %s   •   %s" % [
 			str(package.get("name", "?")).to_upper(),
 			bpm_text,
-			"OK" if valid else "ERRO",
+			(
+				"JÁ INSTALADA"
+				if installed
+				else ("NOVA" if valid else "ERRO")
+			),
 		]
 
 		var selected: bool = index == _music_cursor
@@ -799,14 +965,40 @@ func _refresh_music_view() -> void:
 			"font_color",
 			Color(1.0, 0.86, 0.20, 1.0)
 			if selected
-			else (Color.WHITE if valid else Color(1.0, 0.48, 0.48, 1.0))
+			else (
+				Color(0.42, 1.0, 0.68, 1.0)
+				if installed
+				else (Color.WHITE if valid else Color(1.0, 0.48, 0.48, 1.0))
+			)
 		)
 		_fit_label_to_width(_music_labels[slot], int(_radius * 0.031), 10)
 
 	var selected_package: Dictionary = _usb_packages[_music_cursor]
-	if bool(selected_package.get("valid", false)):
-		_music_detail.text = "DRIVE %s   •   MP3 + OGV + CAPA + TXT OK" % str(
-			selected_package.get("drive", "?")
+	if bool(selected_package.get("installed", false)):
+		var existing: Dictionary = selected_package.get("installed_match", {}) as Dictionary
+		_music_detail.text = "JÁ EXISTE COMO: %s   •   %s" % [
+			str(existing.get("title", "?")),
+			str(existing.get("source", "INSTALADA")),
+		]
+	elif bool(selected_package.get("valid", false)):
+		var original_category: String = str(
+			selected_package.get("category_original", "")
+		)
+		var clean_category: String = str(
+			selected_package.get("category", "OUTROS")
+		)
+		var category_note: String = (
+			"   •   %s → %s" % [original_category.to_upper(), clean_category]
+			if not original_category.is_empty()
+			and original_category.to_upper() != clean_category
+			else ""
+		)
+		_music_detail.text = (
+			"DRIVE %s   •   PACOTE OK%s"
+			% [
+				str(selected_package.get("drive", "?")),
+				category_note,
+			]
 		)
 	else:
 		_music_detail.text = "ERRO: " + str(selected_package.get("error", "Pacote inválido."))
@@ -824,6 +1016,9 @@ func _import_package(package: Dictionary, bpm: float) -> void:
 			roundi(bpm),
 		]
 		_menu_feedback("menu_select_feedback")
+		_refresh_menu_texts()
+		_scan_usb()
+		return
 	else:
 		_music_status.add_theme_color_override("font_color", Color(1.0, 0.42, 0.42, 1.0))
 		_music_status.text = str(result.get("erro", "Falha ao importar."))
@@ -1122,6 +1317,7 @@ func _open_counters_view() -> void:
 	_in_counters_view = true
 	_panel.visible = false
 	_counters_layer.visible = true
+	_set_touch_back_visible(true)
 	_refresh_counters_view()
 
 
@@ -1129,6 +1325,7 @@ func _close_counters_view() -> void:
 	_in_counters_view = false
 	_counters_layer.visible = false
 	_panel.visible = true
+	_set_touch_back_visible(false)
 	_refresh_menu_texts()
 	_set_main_top_context()
 
@@ -1242,6 +1439,7 @@ func _open_test_view() -> void:
 	_in_test_view = true
 	_panel.visible = false
 	_test_layer.visible = true
+	_set_touch_back_visible(true)
 
 	var client := get_node_or_null("/root/LedClient")
 	if client != null and client.has_method("begin_stage"):
@@ -1258,6 +1456,7 @@ func _close_test_view() -> void:
 	_in_test_view = false
 	_test_layer.visible = false
 	_panel.visible = true
+	_set_touch_back_visible(false)
 
 	var client := get_node_or_null("/root/LedClient")
 	if client != null and client.has_method("clear_all"):

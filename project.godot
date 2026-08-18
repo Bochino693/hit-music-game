@@ -16,9 +16,12 @@ run/print_header=false
 config/features=PackedStringArray("4.6", "GL Compatibility")
 boot_splash/show_image=false
 config/icon="res://images/hit_music.png"
+config/use_custom_user_dir=true
+config/custom_user_dir_name="Hit Music"
 
 [autoload]
 
+DataMigration="*res://scripts/data_migration.gd"
 LedClient="*res://scripts/led_client.gd"
 ArcadeSettings="*res://scripts/arcade_settings.gd"
 ArcadeShell="*res://scripts/arcade_shell.gd"
