@@ -390,9 +390,25 @@ func _input(event: InputEvent) -> void:
 	# O F9 nao e mais tratado aqui: quem cuida dele e o autoload ArcadeShell,
 	# que vale em TODAS as telas. Duplicar a checagem faria as duas trocarem
 	# de cena no mesmo quadro.
-	# Tecla "1" também funciona como START (além do input_start do encoder).
+
+	# Tecla "1" funciona como START.
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_1:
 		_ao_apertar_start()
+		return
+
+	# Clique esquerdo em qualquer ponto da tela funciona como START.
+	# O mouse continua invisivel porque o _ready() usa MOUSE_MODE_HIDDEN.
+	if event is InputEventMouseButton:
+		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			_ao_apertar_start()
+			return
+
+	# Toque real da moldura/tela touch tambem funciona como START.
+	# Alguns drivers touch geram ScreenTouch, outros geram MouseButton;
+	# suportar os dois deixa o gabinete robusto.
+	if event is InputEventScreenTouch and event.pressed:
+		_ao_apertar_start()
+		return
 
 
 func _criar_tween_seguro() -> Tween:
