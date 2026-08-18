@@ -204,7 +204,9 @@ func add_effect(
 		return
 	var duration: float = 0.68
 	if kind == "slide":
-		duration = 0.78
+		# A explosao conserva a estrela de 4/5/6/8 pontas, mas e curta. O
+		# sprite do percurso ja foi removido pelo stage no quadro do acerto.
+		duration = 0.46
 	elif kind == "hold":
 		duration = 0.88
 
@@ -339,12 +341,9 @@ func _draw() -> void:
 			var type_name: String = str(event.get("type", "tap"))
 
 			if bool(event.get("_resolved", false)):
-				# Um arrasto resolvido continua desenhado enquanto a
-				# estrela nao terminou de percorrer o trajeto. Sem isso
-				# ela sumia no meio do caminho quando o acerto era
-				# reconhecido antes de a imagem alcancar o fim.
-				if type_name != "slide" or not _slide_still_running(event):
-					continue
+				# Resolvido significa encerrado visualmente neste mesmo quadro.
+				# O burst de acerto e desenhado separadamente em _draw_effects().
+				continue
 
 			if type_name == "hold":
 				_draw_hold(event)

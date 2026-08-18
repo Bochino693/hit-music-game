@@ -14,6 +14,10 @@ const CIRCLE_SCALE: float = 0.985
 const PREVIEW_DELAY: float = 0.75
 const PREVIEW_ALPHA: float = 0.62
 const CARD_SPACING_RATIO: float = 0.205
+const CATEGORY_ORDER: Array[String] = [
+	"ANIME", "INFANTIL", "ROCK", "POP", "ELETRONICA",
+	"FUNK", "HIP HOP", "SERTANEJO", "GOSPEL", "CLASSICA", "OUTROS",
+]
 
 ## Botao que desce na lista — definido em led_client.gd, que e a fonte
 ## unica do mapeamento fisico. Passou do input_d (lane 3) para o
@@ -30,19 +34,23 @@ var _lane_positions: PackedVector2Array = PackedVector2Array()
 var _video_rect: Rect2 = Rect2()
 var _preview_wait: float = 0.0
 var _transitioning: bool = false
+## Ao trocar de cena, Input.is_action_just_pressed ainda pode permanecer
+## verdadeiro ate o fim do frame. Sem esta quarentena, o B usado para sair
+## do resultado chega ao seletor novo e inicia a musica imediatamente.
+const INPUT_RELEASE_ARM_SECONDS: float = 0.18
+var _input_armed: bool = false
+var _input_release_time: float = 0.0
 var _visual_time: float = 0.0
 
 var _video: VideoStreamPlayer
 var _preview_audio: AudioStreamPlayer
+var _nav_sfx: AudioStreamPlayer
 var _ui: CanvasLayer
 var _top_panel: Panel
 var _brand_label: Label
 var _subtitle_label: Label
 var _instruction_label: Label
-var _easy_chip: Panel
-var _hard_chip: Panel
-var _easy_label: Label
-var _hard_label: Label
+var _difficulty_label: Label
 var _content_root: Control
 var _list_root: Control
 var _info_panel: Panel
@@ -50,10 +58,9 @@ var _cover_frame: Panel
 var _cover: TextureRect
 var _track_badge: Panel
 var _track_label: Label
-var _song_name: Label
 var _category_label: Label
+var _song_name: Label
 var _bpm_label: Label
-var _mode_label: Label
 var _record_label: Label
 var _hard_record_label: Label
 var _start_panel: Panel
@@ -62,9 +69,16 @@ var _cards: Array[Panel] = []
 var _card_labels: Array[Label] = []
 var _card_track_labels: Array[Label] = []
 var _card_covers: Array[TextureRect] = []
+var _nav_up_chip: Panel
+var _nav_down_chip: Panel
+var _nav_hold_direction: int = 0
+var _nav_hold_elapsed: float = 0.0
+var _nav_hold_repeat_elapsed: float = 0.0
 
 
 func _ready() -> void:
+	_input_armed = false
+	_input_release_time = 0.0
 	Engine.max_fps = 60
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 
@@ -72,6 +86,7 @@ func _ready() -> void:
 	if _songs.is_empty():
 		push_error("Catalogo Hit Music vazio.")
 		return
+	_group_songs_by_category()
 
 	if get_tree().has_meta("hit_music_selector_index"):
 		_index = clampi(
@@ -95,7 +110,8 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	_visual_time += delta
 
-	if not _transitioning:
+	var menu_input_ready: bool = _update_input_arming(delta)
+	if not _transitioning and menu_input_ready:
 		# A sobe na lista, E desce (ver DOWN_ACTION). O sentido tem que
 		# bater com a posicao fisica dos botoes no gabinete.
 		if _action_pressed("input_a") or _action_pressed("ui_up") or _action_pressed("ui_left"):
@@ -103,10 +119,7 @@ func _process(delta: float) -> void:
 		elif _action_pressed(DOWN_ACTION) or _action_pressed("ui_down") or _action_pressed("ui_right"):
 			_change_selection(1)
 
-		if _action_pressed("input_b"):
-			_toggle_difficulty()
-
-		if _action_pressed("input_start") or _action_pressed("ui_accept"):
+		if _action_pressed("input_b") or _action_pressed("input_start") or _action_pressed("ui_accept"):
 			_start_selected()
 
 		_preview_wait += delta
@@ -120,8 +133,31 @@ func _process(delta: float) -> void:
 			preview_tween.tween_property(_video, "modulate:a", PREVIEW_ALPHA, 0.48)
 
 	_update_card_animation(delta)
+	_update_nav_hold(delta)
 	_update_live_styles()
 	queue_redraw()
+
+
+## Libera a navegacao somente depois de todos os comandos envolvidos na
+## troca de tela permanecerem soltos. A trava vale tanto para B quanto START,
+## portanto nenhum botao residual reinicia uma fase ao voltar ao catalogo.
+func _update_input_arming(delta: float) -> bool:
+	if _input_armed:
+		return true
+
+	var actions: Array[String] = [
+		"input_a", "input_b", DOWN_ACTION, "input_start",
+		"ui_up", "ui_down", "ui_left", "ui_right", "ui_accept",
+	]
+	for action in actions:
+		if InputMap.has_action(action) and Input.is_action_pressed(action):
+			_input_release_time = 0.0
+			return false
+
+	_input_release_time += delta
+	if _input_release_time >= INPUT_RELEASE_ARM_SECONDS:
+		_input_armed = true
+	return _input_armed
 
 
 func _draw() -> void:
@@ -187,23 +223,35 @@ func _input(event: InputEvent) -> void:
 		var touch: InputEventScreenTouch = event
 		if touch.pressed:
 			_handle_touch(touch.position)
+		else:
+			_stop_nav_hold()
 	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		var mouse: InputEventMouseButton = event
 		if mouse.pressed:
 			_handle_touch(mouse.position)
+		else:
+			_stop_nav_hold()
 
 
 func _handle_touch(position_value: Vector2) -> void:
-	if _easy_chip != null and Rect2(_easy_chip.global_position, _easy_chip.size).has_point(position_value):
-		if _difficulty != "easy":
-			_difficulty = "easy"
-			_apply_selection(false)
+	if _nav_up_chip != null and Rect2(
+		_nav_up_chip.global_position,
+		_nav_up_chip.size
+	).has_point(position_value):
+		_start_nav_hold(-1)
+		return
+	if _nav_down_chip != null and Rect2(
+		_nav_down_chip.global_position,
+		_nav_down_chip.size
+	).has_point(position_value):
+		_start_nav_hold(1)
 		return
 
-	if _hard_chip != null and Rect2(_hard_chip.global_position, _hard_chip.size).has_point(position_value):
-		if _difficulty != "hard":
-			_difficulty = "hard"
-			_apply_selection(false)
+	if _difficulty_label != null and Rect2(
+		_difficulty_label.global_position,
+		_difficulty_label.size
+	).has_point(position_value):
+		_toggle_difficulty()
 		return
 
 	for card_index in range(_cards.size()):
@@ -259,6 +307,13 @@ func _build_scene() -> void:
 	_preview_audio.volume_db = -7.0
 	add_child(_preview_audio)
 
+	_nav_sfx = AudioStreamPlayer.new()
+	_nav_sfx.name = "NavigationFeedback"
+	_nav_sfx.bus = "Master"
+	_nav_sfx.volume_db = -4.0
+	_nav_sfx.stream = _make_navigation_tone()
+	add_child(_nav_sfx)
+
 	_video = VideoStreamPlayer.new()
 	_video.position = _video_rect.position
 	_video.size = _video_rect.size
@@ -293,50 +348,24 @@ func _build_scene() -> void:
 		font
 	)
 	_brand_label.position = Vector2(top_height * 0.12, top_height * 0.055)
-	_brand_label.size = Vector2(_top_panel.size.x * 0.50, top_height * 0.34)
+	_brand_label.size = Vector2(_top_panel.size.x * 0.84, top_height * 0.34)
 	_top_panel.add_child(_brand_label)
 
 	_subtitle_label = _make_label(
-		"SELECT YOUR TRACK",
+		"ESCOLHA SUA MÚSICA  •  RITMO  •  PRECISÃO  •  ENERGIA",
 		int(top_height * 0.105),
 		HORIZONTAL_ALIGNMENT_LEFT,
 		font
 	)
 	_subtitle_label.position = Vector2(top_height * 0.13, top_height * 0.34)
-	_subtitle_label.size = Vector2(_top_panel.size.x * 0.48, top_height * 0.20)
+	_subtitle_label.size = Vector2(_top_panel.size.x * 0.84, top_height * 0.20)
+	_subtitle_label.clip_text = true
+	_fit_label_to_width(_subtitle_label, _subtitle_label.size.x, int(top_height * 0.105), int(top_height * 0.072))
 	_subtitle_label.add_theme_color_override("font_color", Color(0.72, 0.78, 0.90, 1.0))
 	_top_panel.add_child(_subtitle_label)
 
-	_easy_chip = Panel.new()
-	_easy_chip.position = Vector2(_top_panel.size.x * 0.62, top_height * 0.11)
-	_easy_chip.size = Vector2(_top_panel.size.x * 0.145, top_height * 0.34)
-	_top_panel.add_child(_easy_chip)
-
-	_easy_label = _make_label(
-		"FACIL",
-		int(top_height * 0.13),
-		HORIZONTAL_ALIGNMENT_CENTER,
-		font
-	)
-	_easy_label.size = _easy_chip.size
-	_easy_chip.add_child(_easy_label)
-
-	_hard_chip = Panel.new()
-	_hard_chip.position = Vector2(_top_panel.size.x * 0.775, top_height * 0.11)
-	_hard_chip.size = Vector2(_top_panel.size.x * 0.17, top_height * 0.34)
-	_top_panel.add_child(_hard_chip)
-
-	_hard_label = _make_label(
-		"DIFICIL",
-		int(top_height * 0.13),
-		HORIZONTAL_ALIGNMENT_CENTER,
-		font
-	)
-	_hard_label.size = _hard_chip.size
-	_hard_chip.add_child(_hard_label)
-
 	_instruction_label = _make_label(
-		"A  PRÓXIMA     D  ANTERIOR     B / START  JOGAR",
+		"LED A  SUBIR     LED B  JOGAR     LED E  DESCER",
 		int(top_height * 0.10),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
@@ -405,9 +434,14 @@ func _build_nav_hints(font: Font) -> void:
 		var chip := Panel.new()
 		chip.size = chip_size
 		chip.position = chip_center - chip_size * 0.5
+		chip.pivot_offset = chip_size * 0.5
 		chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		chip.add_theme_stylebox_override("panel", _nav_hint_style(is_accent))
 		_content_root.add_child(chip)
+		if str(hint["text"]) == "SUBIR":
+			_nav_up_chip = chip
+		elif str(hint["text"]) == "DESCER":
+			_nav_down_chip = chip
 
 		var label := _make_label(
 			str(hint["text"]),
@@ -521,33 +555,47 @@ func _build_cards(font: Font) -> void:
 		cover.position = Vector2(card.size.y * 0.09, card.size.y * 0.09)
 		cover.size = Vector2(card.size.y * 0.82, card.size.y * 0.82)
 		cover.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		cover.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		# Exibe a arte inteira no espaco da propria musica: sem zoom e sem corte.
+		cover.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		cover.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		cover.texture = _load_texture(str(song.get("cover", "")))
 		card.add_child(cover)
 
 		var text_x: float = cover.position.x + cover.size.x + card.size.x * 0.045
+		var text_width: float = card.size.x - text_x - card.size.x * 0.035
 		var track := _make_label(
 			"TRACK %02d" % (song_index + 1),
-			int(_radius * 0.019),
+			int(_radius * 0.025),
 			HORIZONTAL_ALIGNMENT_LEFT,
 			font
 		)
-		track.position = Vector2(text_x, card.size.y * 0.08)
-		track.size = Vector2(card.size.x - text_x - card.size.x * 0.05, card.size.y * 0.29)
+		track.position = Vector2(text_x, card.size.y * 0.04)
+		track.size = Vector2(text_width * 0.48, card.size.y * 0.30)
 		track.add_theme_color_override("font_color", Color(0.64, 0.72, 0.84, 1.0))
 		card.add_child(track)
 
+		var card_category := _make_label(
+			_song_category(song),
+			int(_radius * 0.021),
+			HORIZONTAL_ALIGNMENT_RIGHT,
+			font
+		)
+		card_category.position = Vector2(text_x + text_width * 0.48, card.size.y * 0.04)
+		card_category.size = Vector2(text_width * 0.52, card.size.y * 0.30)
+		card_category.add_theme_color_override("font_color", _category_color(_song_category(song)))
+		_fit_label_to_width(card_category, card_category.size.x, int(_radius * 0.021), int(_radius * 0.015))
+		card.add_child(card_category)
+
 		var label := _make_label(
 			str(song.get("title", "TRACK")),
-			int(_radius * 0.032),
+			int(_radius * 0.043),
 			HORIZONTAL_ALIGNMENT_LEFT,
 			font
 		)
-		label.position = Vector2(text_x, card.size.y * 0.34)
-		label.size = Vector2(card.size.x - text_x - card.size.x * 0.05, card.size.y * 0.57)
+		label.position = Vector2(text_x, card.size.y * 0.30)
+		label.size = Vector2(card.size.x - text_x - card.size.x * 0.035, card.size.y * 0.66)
 		label.clip_text = true
-		_fit_label_to_width(label, label.size.x, int(_radius * 0.032), int(_radius * 0.017))
+		_fit_label_to_width(label, label.size.x, int(_radius * 0.043), int(_radius * 0.023))
 		card.add_child(label)
 
 		_cards.append(card)
@@ -564,8 +612,10 @@ func _build_info_panel(font: Font) -> void:
 	_content_root.add_child(_info_panel)
 
 	_cover_frame = Panel.new()
-	_cover_frame.position = Vector2(_info_panel.size.x * 0.055, _info_panel.size.y * 0.045)
-	_cover_frame.size = Vector2(_info_panel.size.x * 0.89, _info_panel.size.y * 0.35)
+	# Mantem o card no mesmo tamanho, mas recupera espaco vertical que antes
+	# ficava preso em margens e intervalos grandes demais.
+	_cover_frame.position = Vector2(_info_panel.size.x * 0.055, _info_panel.size.y * 0.018)
+	_cover_frame.size = Vector2(_info_panel.size.x * 0.89, _info_panel.size.y * 0.315)
 	_cover_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_info_panel.add_child(_cover_frame)
 
@@ -573,100 +623,103 @@ func _build_info_panel(font: Font) -> void:
 	_cover.position = Vector2(_cover_frame.size.x * 0.025, _cover_frame.size.y * 0.04)
 	_cover.size = Vector2(_cover_frame.size.x * 0.95, _cover_frame.size.y * 0.92)
 	_cover.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_cover.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	# Mostra 100% da capa no quadro, preservando a proporcao original.
+	_cover.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_cover.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_cover_frame.add_child(_cover)
 
 	_track_badge = Panel.new()
-	_track_badge.position = Vector2(_info_panel.size.x * 0.055, _info_panel.size.y * 0.425)
-	_track_badge.size = Vector2(_info_panel.size.x * 0.37, _info_panel.size.y * 0.075)
+	_track_badge.position = Vector2(_info_panel.size.x * 0.055, _info_panel.size.y * 0.345)
+	_track_badge.size = Vector2(_info_panel.size.x * 0.46, _info_panel.size.y * 0.086)
 	_info_panel.add_child(_track_badge)
 
 	_track_label = _make_label(
 		"TRACK 01",
-		int(_radius * 0.022),
+		int(_radius * 0.034),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
 	_track_label.size = _track_badge.size
 	_track_badge.add_child(_track_label)
 
-	_song_name = _make_label(
-		"TRACK",
-		int(_radius * 0.046),
+	# Um unico indicador integrado ao card substitui as duas janelas do topo.
+	# Alem de mais limpo, ele continua permitindo alternar o nivel por toque.
+	_difficulty_label = _make_label(
+		"NÍVEL  •  FÁCIL",
+		int(_radius * 0.032),
+		HORIZONTAL_ALIGNMENT_RIGHT,
+		font
+	)
+	_difficulty_label.position = Vector2(_info_panel.size.x * 0.535, _info_panel.size.y * 0.345)
+	_difficulty_label.size = Vector2(_info_panel.size.x * 0.41, _info_panel.size.y * 0.086)
+	_difficulty_label.clip_text = true
+	_info_panel.add_child(_difficulty_label)
+
+	_category_label = _make_label(
+		"CATEGORIA  •  ANIME",
+		int(_radius * 0.034),
 		HORIZONTAL_ALIGNMENT_LEFT,
 		font
 	)
-	_song_name.position = Vector2(_info_panel.size.x * 0.06, _info_panel.size.y * 0.51)
-	_song_name.size = Vector2(_info_panel.size.x * 0.88, _info_panel.size.y * 0.16)
+	_category_label.position = Vector2(_info_panel.size.x * 0.055, _info_panel.size.y * 0.590)
+	_category_label.size = Vector2(_info_panel.size.x * 0.89, _info_panel.size.y * 0.062)
+	_category_label.clip_text = true
+	_info_panel.add_child(_category_label)
+
+	_song_name = _make_label(
+		"TRACK",
+		int(_radius * 0.074),
+		HORIZONTAL_ALIGNMENT_LEFT,
+		font
+	)
+	_song_name.position = Vector2(_info_panel.size.x * 0.055, _info_panel.size.y * 0.432)
+	_song_name.size = Vector2(_info_panel.size.x * 0.89, _info_panel.size.y * 0.156)
 	_song_name.autowrap_mode = TextServer.AUTOWRAP_OFF
 	_song_name.clip_text = true
 	_info_panel.add_child(_song_name)
 
-	_category_label = _make_label(
-		"ANIME MUSIC",
-		int(_radius * 0.022),
-		HORIZONTAL_ALIGNMENT_LEFT,
-		font
-	)
-	_category_label.position = Vector2(_info_panel.size.x * 0.06, _info_panel.size.y * 0.675)
-	_category_label.size = Vector2(_info_panel.size.x * 0.88, _info_panel.size.y * 0.055)
-	_category_label.add_theme_color_override("font_color", Color(0.70, 0.76, 0.86, 1.0))
-	_category_label.clip_text = true
-	_info_panel.add_child(_category_label)
-
 	_bpm_label = _make_label(
-		"BPM 120",
-		int(_radius * 0.022),
+		"120 BPM",
+		int(_radius * 0.046),
 		HORIZONTAL_ALIGNMENT_LEFT,
 		font
 	)
-	_bpm_label.position = Vector2(_info_panel.size.x * 0.06, _info_panel.size.y * 0.735)
-	_bpm_label.size = Vector2(_info_panel.size.x * 0.43, _info_panel.size.y * 0.055)
+	_bpm_label.position = Vector2(_info_panel.size.x * 0.055, _info_panel.size.y * 0.652)
+	_bpm_label.size = Vector2(_info_panel.size.x * 0.89, _info_panel.size.y * 0.078)
 	_bpm_label.clip_text = true
+	_bpm_label.add_theme_color_override("font_color", Color(0.72, 0.86, 1.0, 1.0))
 	_info_panel.add_child(_bpm_label)
-
-	_mode_label = _make_label(
-		"MODE FACIL",
-		int(_radius * 0.022),
-		HORIZONTAL_ALIGNMENT_RIGHT,
-		font
-	)
-	_mode_label.position = Vector2(_info_panel.size.x * 0.48, _info_panel.size.y * 0.735)
-	_mode_label.size = Vector2(_info_panel.size.x * 0.46, _info_panel.size.y * 0.055)
-	_mode_label.clip_text = true
-	_info_panel.add_child(_mode_label)
 
 	_record_label = _make_label(
 		"RECORDE FÁCIL  0.00%",
-		int(_radius * 0.022),
+		int(_radius * 0.033),
 		HORIZONTAL_ALIGNMENT_LEFT,
 		font
 	)
-	_record_label.position = Vector2(_info_panel.size.x * 0.06, _info_panel.size.y * 0.795)
-	_record_label.size = Vector2(_info_panel.size.x * 0.88, _info_panel.size.y * 0.052)
+	_record_label.position = Vector2(_info_panel.size.x * 0.055, _info_panel.size.y * 0.731)
+	_record_label.size = Vector2(_info_panel.size.x * 0.89, _info_panel.size.y * 0.074)
 	_record_label.clip_text = true
 	_info_panel.add_child(_record_label)
 
 	_hard_record_label = _make_label(
 		"RECORDE DIFÍCIL  0.00%",
-		int(_radius * 0.022),
+		int(_radius * 0.033),
 		HORIZONTAL_ALIGNMENT_LEFT,
 		font
 	)
-	_hard_record_label.position = Vector2(_info_panel.size.x * 0.06, _info_panel.size.y * 0.848)
-	_hard_record_label.size = Vector2(_info_panel.size.x * 0.88, _info_panel.size.y * 0.052)
+	_hard_record_label.position = Vector2(_info_panel.size.x * 0.055, _info_panel.size.y * 0.808)
+	_hard_record_label.size = Vector2(_info_panel.size.x * 0.89, _info_panel.size.y * 0.074)
 	_hard_record_label.clip_text = true
 	_info_panel.add_child(_hard_record_label)
 
 	_start_panel = Panel.new()
-	_start_panel.position = Vector2(_info_panel.size.x * 0.055, _info_panel.size.y * 0.915)
-	_start_panel.size = Vector2(_info_panel.size.x * 0.89, _info_panel.size.y * 0.065)
+	_start_panel.position = Vector2(_info_panel.size.x * 0.055, _info_panel.size.y * 0.895)
+	_start_panel.size = Vector2(_info_panel.size.x * 0.89, _info_panel.size.y * 0.088)
 	_info_panel.add_child(_start_panel)
 
 	_start_label = _make_label(
-		"B / START  •  JOGAR",
-		int(_radius * 0.028),
+		"LED B  •  JOGAR",
+		int(_radius * 0.041),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
@@ -678,6 +731,58 @@ func _build_info_panel(font: Font) -> void:
 func _change_selection(direction: int) -> void:
 	_index = posmod(_index + direction, _songs.size())
 	_apply_selection(false)
+	_play_navigation_feedback(direction)
+
+
+func _start_nav_hold(direction: int) -> void:
+	_nav_hold_direction = -1 if direction < 0 else 1
+	_nav_hold_elapsed = 0.0
+	_nav_hold_repeat_elapsed = 0.0
+	_set_nav_pressed(_nav_hold_direction, true)
+	_change_selection(_nav_hold_direction)
+
+
+func _stop_nav_hold() -> void:
+	if _nav_hold_direction == 0:
+		return
+	_set_nav_pressed(_nav_hold_direction, false)
+	_nav_hold_direction = 0
+	_nav_hold_elapsed = 0.0
+	_nav_hold_repeat_elapsed = 0.0
+
+
+func _update_nav_hold(delta: float) -> void:
+	if _nav_hold_direction == 0:
+		return
+	_nav_hold_elapsed += delta
+	if _nav_hold_elapsed < 0.42:
+		return
+	_nav_hold_repeat_elapsed += delta
+	if _nav_hold_repeat_elapsed >= 0.16:
+		_nav_hold_repeat_elapsed = 0.0
+		_change_selection(_nav_hold_direction)
+
+
+func _set_nav_pressed(direction: int, pressed: bool) -> void:
+	var chip: Panel = _nav_up_chip if direction < 0 else _nav_down_chip
+	if chip == null:
+		return
+	chip.add_theme_stylebox_override("panel", _nav_hint_style(pressed))
+	var tween: Tween = create_tween()
+	tween.set_trans(Tween.TRANS_BACK)
+	tween.set_ease(Tween.EASE_OUT)
+	tween.tween_property(chip, "scale", Vector2.ONE * (0.92 if pressed else 1.0), 0.10)
+
+
+func _play_navigation_feedback(direction: int) -> void:
+	if _nav_sfx != null:
+		_nav_sfx.stop()
+		_nav_sfx.pitch_scale = 1.18 if direction < 0 else 0.82
+		_nav_sfx.play()
+	if direction < 0:
+		LED_CLIENT.hit_lane(LED_CLIENT.NAV_NEXT_LANE, _song_primary(_songs[_index] as Dictionary), 170)
+	else:
+		LED_CLIENT.hit_lane(LED_CLIENT.NAV_DOWN_LANE, _song_accent(_songs[_index] as Dictionary), 170)
 
 
 func _toggle_difficulty() -> void:
@@ -691,24 +796,30 @@ func _apply_selection(immediate: bool) -> void:
 
 	var song: Dictionary = _songs[_index] as Dictionary
 	_track_label.text = "TRACK %02d / %02d" % [_index + 1, _songs.size()]
+	_difficulty_label.text = "NÍVEL  •  " + ("DIFÍCIL" if _difficulty == "hard" else "FÁCIL")
+	_fit_label_to_width(_difficulty_label, _difficulty_label.size.x, int(_radius * 0.032), int(_radius * 0.023))
+	_category_label.text = "CATEGORIA  •  " + _song_category(song)
+	_fit_label_to_width(_category_label, _category_label.size.x, int(_radius * 0.034), int(_radius * 0.024))
 	_song_name.text = str(song.get("title", "TRACK"))
-	_category_label.text = "ANIME / RHYTHM"
-	_bpm_label.text = "BPM %d" % int(round(float(song.get("bpm", 120.0))))
-	_mode_label.text = "MODE " + ("DIFICIL" if _difficulty == "hard" else "FACIL")
+	_bpm_label.text = "%d BPM" % int(round(float(song.get("bpm", 120.0))))
 	_record_label.text = "RECORDE FÁCIL   " + _best_record(song, "easy")
 	_hard_record_label.text = "RECORDE DIFÍCIL   " + _best_record(song, "hard")
 	_cover.texture = _load_texture(str(song.get("cover", "")))
-	_fit_label_to_width(_song_name, _song_name.size.x, int(_radius * 0.046), int(_radius * 0.022))
-	_fit_label_to_width(_category_label, _category_label.size.x, int(_radius * 0.022), int(_radius * 0.015))
-	_fit_label_to_width(_record_label, _record_label.size.x, int(_radius * 0.022), int(_radius * 0.015))
-	_fit_label_to_width(_hard_record_label, _hard_record_label.size.x, int(_radius * 0.022), int(_radius * 0.015))
+	_fit_label_to_width(_song_name, _song_name.size.x, int(_radius * 0.074), int(_radius * 0.035))
+	_fit_label_to_width(_record_label, _record_label.size.x, int(_radius * 0.033), int(_radius * 0.024))
+	_fit_label_to_width(_hard_record_label, _hard_record_label.size.x, int(_radius * 0.033), int(_radius * 0.024))
 
 	_load_preview(song)
 	_update_cards(immediate)
 	_update_live_styles()
-	LED_CLIENT.menu_state(_index, _song_primary(song))
-
-
+	LED_CLIENT.menu_state_three(
+		_song_primary(song),
+		LED_CLIENT.MENU_SELECT_COLOR,
+		_song_accent(song),
+		LED_CLIENT.NAV_NEXT_LANE,
+		LED_CLIENT.NAV_SELECT_LANE,
+		LED_CLIENT.NAV_DOWN_LANE
+	)
 func _update_cards(immediate: bool) -> void:
 	var total: int = _cards.size()
 	for card_index in range(total):
@@ -720,7 +831,10 @@ func _update_cards(immediate: bool) -> void:
 			relative += total
 
 		var target_y: float = _radius * 0.91 + float(relative) * _radius * CARD_SPACING_RATIO
-		var target_x: float = _radius * 0.19 + (_radius * 0.055 if relative == 0 else 0.0)
+		# Todos os cards compartilham exatamente o eixo dos botoes SUBIR/DESCER.
+		# O destaque cresce pelo pivot central, sem empurrar o item selecionado.
+		var card_width_ratio: float = 0.78
+		var target_x: float = _radius * (NAV_LIST_CENTER_X - card_width_ratio * 0.5)
 		var visible_range: bool = abs(relative) <= 2
 		var target_scale: Vector2 = (
 			Vector2(1.055, 1.055)
@@ -784,34 +898,71 @@ func _update_live_styles() -> void:
 	_cover_frame.add_theme_stylebox_override("panel", _cover_style(song))
 	_track_badge.add_theme_stylebox_override("panel", _badge_style(primary))
 	_start_panel.add_theme_stylebox_override("panel", _start_style(song, pulse))
-	_easy_chip.add_theme_stylebox_override(
-		"panel",
-		_difficulty_style(song, _difficulty == "easy")
-	)
-	_hard_chip.add_theme_stylebox_override(
-		"panel",
-		_difficulty_style(song, _difficulty == "hard")
-	)
-
 	_brand_label.add_theme_color_override("font_color", Color.WHITE)
 	_subtitle_label.add_theme_color_override(
 		"font_color",
 		Color(primary.r, primary.g, primary.b, 0.92)
 	)
-	_easy_label.add_theme_color_override(
-		"font_color",
-		Color.WHITE if _difficulty == "easy" else Color(0.58, 0.64, 0.74, 1.0)
-	)
-	_hard_label.add_theme_color_override(
-		"font_color",
-		Color.WHITE if _difficulty == "hard" else Color(0.58, 0.64, 0.74, 1.0)
-	)
 	_track_label.add_theme_color_override("font_color", Color.WHITE)
+	_difficulty_label.add_theme_color_override(
+		"font_color",
+		accent if _difficulty == "hard" else primary.lerp(Color.WHITE, 0.24)
+	)
+	_category_label.add_theme_color_override("font_color", _category_color(_song_category(song)))
 	_bpm_label.add_theme_color_override("font_color", primary)
-	_mode_label.add_theme_color_override("font_color", accent)
 	_record_label.add_theme_color_override("font_color", Color.WHITE)
 	_hard_record_label.add_theme_color_override("font_color", accent.lerp(Color.WHITE, 0.35))
 	_start_label.add_theme_color_override("font_color", Color.WHITE)
+
+
+## Categorias sao dados reais do catalogo. A ordem fixa cria blocos continuos
+## na playlist e evita que musicas infantis se misturem com anime ou rock.
+func _song_category(song: Dictionary) -> String:
+	var category: String = str(song.get("category", "OUTROS")).strip_edges().to_upper()
+	return category if not category.is_empty() else "OUTROS"
+
+
+func _group_songs_by_category() -> void:
+	var original_songs: Array = _songs.duplicate()
+	var grouped_songs: Array = []
+	for category in CATEGORY_ORDER:
+		for song_value in original_songs:
+			var song_item: Dictionary = song_value as Dictionary
+			if _song_category(song_item) == category:
+				grouped_songs.append(song_item)
+
+	# Mantem musicas futuras sem categoria no fim, sem remove-las do menu.
+	for remaining_value in original_songs:
+		var remaining_song: Dictionary = remaining_value as Dictionary
+		if not CATEGORY_ORDER.has(_song_category(remaining_song)):
+			grouped_songs.append(remaining_song)
+	_songs = grouped_songs
+
+
+func _category_color(category: String) -> Color:
+	match category.to_upper():
+		"ANIME":
+			return Color8(255, 79, 184)
+		"ROCK":
+			return Color8(255, 106, 42)
+		"INFANTIL":
+			return Color8(36, 216, 255)
+		"POP":
+			return Color8(255, 86, 178)
+		"ELETRONICA":
+			return Color8(42, 235, 220)
+		"FUNK":
+			return Color8(188, 86, 255)
+		"HIP HOP":
+			return Color8(255, 191, 54)
+		"SERTANEJO":
+			return Color8(255, 136, 56)
+		"GOSPEL":
+			return Color8(98, 173, 255)
+		"CLASSICA":
+			return Color8(210, 200, 255)
+		_:
+			return Color8(154, 168, 199)
 
 
 func _load_preview(song: Dictionary) -> void:
@@ -930,6 +1081,33 @@ func _load_font() -> Font:
 			if resource is Font:
 				return resource as Font
 	return ThemeDB.fallback_font
+
+
+## Som curto e limpo gerado no proprio jogo. A subida usa pitch mais alto e
+## a descida mais baixo, permitindo reconhecer a direcao sem olhar a tela.
+func _make_navigation_tone() -> AudioStreamWAV:
+	var mix_rate: int = 44100
+	var duration: float = 0.095
+	var sample_count: int = int(float(mix_rate) * duration)
+	var data := PackedByteArray()
+	data.resize(sample_count * 2)
+	for index in range(sample_count):
+		var time_value: float = float(index) / float(mix_rate)
+		var progress: float = float(index) / float(maxi(1, sample_count - 1))
+		var envelope: float = sin(PI * progress) * (1.0 - progress * 0.28)
+		var wave: float = (
+			sin(TAU * 720.0 * time_value)
+			+ sin(TAU * 1440.0 * time_value) * 0.22
+		) * 0.72 * envelope
+		data.encode_s16(index * 2, int(clampf(wave, -1.0, 1.0) * 32767.0))
+
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = mix_rate
+	stream.stereo = false
+	stream.loop_mode = AudioStreamWAV.LOOP_DISABLED
+	stream.data = data
+	return stream
 
 
 func _load_texture(path: String) -> Texture2D:

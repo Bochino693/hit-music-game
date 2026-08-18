@@ -9,8 +9,8 @@ extends RefCounted
 ##
 ## O catalogo junta as duas listas, entao para o resto do jogo nao
 ## existe diferenca: a musica nova aparece no seletor, entra no ranking
-## e gera fase igual as outras — o ritmo dela sai do BPM informado, via
-## rhythm_profile.gd.
+## e gera fase igual as outras — o ritmo dela sai do BPM detectado no audio,
+## via rhythm_profile.gd.
 
 const USER_SONGS_PATH: String = "user://hit_music_user_songs.json"
 const AUDIO_DIR: String = "user://songs"
@@ -24,6 +24,10 @@ const USER_SCENE: String = "res://scenes/user_song.tscn"
 const AUDIO_EXTENSIONS: Array[String] = ["mp3", "ogg", "wav"]
 const COVER_EXTENSIONS: Array[String] = ["png", "jpg", "jpeg", "webp"]
 const VIDEO_EXTENSIONS: Array[String] = ["ogv"]
+const CATEGORIES: Array[String] = [
+	"ANIME", "INFANTIL", "ROCK", "POP", "ELETRONICA",
+	"FUNK", "HIP HOP", "SERTANEJO", "GOSPEL", "CLASSICA", "OUTROS",
+]
 
 
 static func all_user_songs() -> Array:
@@ -65,7 +69,8 @@ static func add_song(
 	audio_source: String,
 	video_source: String,
 	cover_source: String,
-	bpm: float
+	category: String,
+	detected_bpm: float
 ) -> Dictionary:
 	var clean_title: String = title.strip_edges()
 	if clean_title.is_empty():
@@ -76,6 +81,9 @@ static func add_song(
 		return {"ok": false, "erro": "Áudio não encontrado no caminho informado.", "id": ""}
 	if not _extension_allowed(audio_source, AUDIO_EXTENSIONS):
 		return {"ok": false, "erro": "Áudio precisa ser mp3, ogg ou wav.", "id": ""}
+	if detected_bpm < 40.0 or detected_bpm > 260.0:
+		return {"ok": false, "erro": "Aguarde a detecção automática do BPM.", "id": ""}
+	var clean_category: String = _normalize_category(category)
 
 	var songs: Array = all_user_songs()
 	var song_id: String = _unique_id(clean_title, songs)
@@ -103,7 +111,8 @@ static func add_song(
 		"audio": audio_path,
 		"video": video_path,
 		"cover": cover_path,
-		"bpm": clampf(bpm, 40.0, 260.0),
+		"category": clean_category,
+		"bpm": clampf(detected_bpm, 40.0, 260.0),
 		"chart_start": 4.0,
 		"seed": _seed_from_text(song_id),
 		"pattern": "diamonds",
@@ -115,6 +124,82 @@ static func add_song(
 	if not save_user_songs(songs):
 		return {"ok": false, "erro": "Não foi possível gravar o catálogo.", "id": ""}
 	return {"ok": true, "erro": "", "id": song_id}
+
+
+## Le o campo TBPM gravado dentro do MP3. Quando a faixa possui esse dado,
+## a deteccao e instantanea e nao depende do nome do arquivo nem de digitacao.
+static func embedded_bpm(audio_path: String) -> float:
+	if audio_path.get_extension().to_lower() != "mp3":
+		return 0.0
+	var bytes: PackedByteArray = FileAccess.get_file_as_bytes(audio_path)
+	if bytes.size() < 20:
+		return 0.0
+	if bytes[0] != 73 or bytes[1] != 68 or bytes[2] != 51:
+		return 0.0
+
+	var version: int = int(bytes[3])
+	var tag_size: int = _synchsafe_int(bytes, 6)
+	var cursor: int = 10
+	var limit: int = mini(bytes.size(), 10 + tag_size)
+	while cursor + 10 <= limit:
+		var frame_id: String = _ascii(bytes, cursor, 4)
+		if frame_id.strip_edges().is_empty():
+			break
+		var frame_size: int = (
+			_synchsafe_int(bytes, cursor + 4)
+			if version >= 4
+			else _big_endian_int(bytes, cursor + 4)
+		)
+		if frame_size <= 0 or cursor + 10 + frame_size > limit:
+			break
+		if frame_id == "TBPM":
+			var text_start: int = cursor + 11
+			var text_length: int = maxi(0, frame_size - 1)
+			var bpm_text: String = _ascii(bytes, text_start, text_length).strip_edges()
+			var parsed_bpm: float = float(bpm_text)
+			if parsed_bpm >= 40.0 and parsed_bpm <= 260.0:
+				return parsed_bpm
+		cursor += 10 + frame_size
+	return 0.0
+
+
+static func _normalize_category(category: String) -> String:
+	var value: String = category.strip_edges().to_upper()
+	return value if CATEGORIES.has(value) else "OUTROS"
+
+
+static func _ascii(bytes: PackedByteArray, start: int, length: int) -> String:
+	var text: String = ""
+	var end: int = mini(bytes.size(), start + length)
+	for index in range(start, end):
+		var value: int = int(bytes[index])
+		if value == 0:
+			continue
+		if value >= 32 and value <= 126:
+			text += char(value)
+	return text
+
+
+static func _synchsafe_int(bytes: PackedByteArray, start: int) -> int:
+	if start + 3 >= bytes.size():
+		return 0
+	return (
+		(int(bytes[start]) & 0x7F) << 21
+		| (int(bytes[start + 1]) & 0x7F) << 14
+		| (int(bytes[start + 2]) & 0x7F) << 7
+		| (int(bytes[start + 3]) & 0x7F)
+	)
+
+
+static func _big_endian_int(bytes: PackedByteArray, start: int) -> int:
+	if start + 3 >= bytes.size():
+		return 0
+	return (
+		int(bytes[start]) << 24
+		| int(bytes[start + 1]) << 16
+		| int(bytes[start + 2]) << 8
+		| int(bytes[start + 3])
+	)
 
 
 static func remove_song(song_id: String) -> bool:

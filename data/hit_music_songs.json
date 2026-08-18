@@ -3,6 +3,7 @@
     {
       "id": "carmine",
       "title": "CARMINE - ONE PIECE",
+      "category": "ANIME",
       "scene": "res://scenes/carmine.tscn",
       "audio": "res://songs/carmine.mp3",
       "video": "res://medias/carmine.ogv",
@@ -145,6 +146,7 @@
     {
       "id": "dragon_ball",
       "title": "DRAGON BALL",
+      "category": "ANIME",
       "scene": "res://scenes/dragon_ball.tscn",
       "audio": "res://songs/dragon-ball.mp3",
       "video": "res://medias/dragon-ball.ogv",
@@ -287,6 +289,7 @@
     {
       "id": "demon",
       "title": "DEMON",
+      "category": "ANIME",
       "scene": "res://scenes/demon.tscn",
       "audio": "res://songs/demon.mp3",
       "video": "res://medias/demon.ogv",
@@ -429,6 +432,7 @@
     {
       "id": "fairy",
       "title": "FAIRY",
+      "category": "ANIME",
       "scene": "res://scenes/fairy.tscn",
       "audio": "res://songs/fairy.mp3",
       "video": "res://medias/fairy.ogv",
@@ -571,6 +575,7 @@
     {
       "id": "naruto",
       "title": "NARUTO",
+      "category": "ANIME",
       "scene": "res://scenes/naruto.tscn",
       "audio": "res://songs/naruto.mp3",
       "video": "res://medias/naruto.ogv",
@@ -713,6 +718,7 @@
     {
       "id": "rick_morty",
       "title": "RICK AND MORTY",
+      "category": "ANIME",
       "scene": "res://scenes/rick_morty.tscn",
       "audio": "res://songs/rick_morty.mp3",
       "video": "res://medias/rick_morty.ogv",
@@ -854,8 +860,63 @@
       }
     },
     {
+      "id": "patinho_colorido",
+      "title": "PATINHO COLORIDO",
+      "category": "INFANTIL",
+      "scene": "res://scenes/patinho_colorido.tscn",
+      "audio": "res://songs/patinho_colorido.mp3",
+      "video": "res://medias/patinho_colorido.ogv",
+      "cover": "res://images/patinho_colorido.jpg",
+      "bpm": 130.0,
+      "chart_start": 3.0,
+      "seed": 8808,
+      "pattern": "bubbles",
+      "colors": {
+        "primary": "#19CFFF",
+        "secondary": "#FFFFFF",
+        "accent": "#FFE229",
+        "dark": "#031526"
+      },
+      "easy": {
+        "approach": 1.2,
+        "hit_window": 0.26,
+        "perfect_window": 0.1,
+        "step_beats": 2.0,
+        "slide_every": 10,
+        "hold_every": 14,
+        "double_every": 0,
+        "slide_beats": 4.0,
+        "hold_beats": 4.0,
+        "tap_scale": 1.1,
+        "star_scale": 1.1,
+        "hold_width": 1.12,
+        "background_intensity": 0.14,
+        "background_speed": 0.16,
+        "jitter": 0.015
+      },
+      "hard": {
+        "approach": 0.9,
+        "hit_window": 0.17,
+        "perfect_window": 0.07,
+        "step_beats": 1.0,
+        "slide_every": 7,
+        "hold_every": 11,
+        "double_every": 6,
+        "double_distance": 4,
+        "slide_beats": 3.0,
+        "hold_beats": 3.0,
+        "tap_scale": 0.98,
+        "star_scale": 1.02,
+        "hold_width": 0.98,
+        "background_intensity": 0.22,
+        "background_speed": 0.28,
+        "jitter": 0.025
+      }
+    },
+    {
       "id": "soul",
       "title": "SOUL",
+      "category": "ANIME",
       "scene": "res://scenes/soul.tscn",
       "audio": "res://songs/soul.mp3",
       "video": "res://medias/soul.ogv",

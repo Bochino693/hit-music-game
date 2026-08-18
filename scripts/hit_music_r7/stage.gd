@@ -97,6 +97,7 @@ const RESULT_PASS_PERCENT: float = 70.0
 const RESULT_INPUT_LOCK_SECONDS: float = 0.90
 const RECORD_PATH: String = "user://hit_music_records.json"
 const GAME_OVER_STING_PATH: String = "res://songs/game_over.mp3"
+const NEW_RECORD_SCENE_PATH: String = "res://scenes/new_record_celebration.tscn"
 
 const MUSIC_VOLUME_MIN_DB: float = -16.0
 const MUSIC_VOLUME_MAX_DB: float = -1.0
@@ -127,6 +128,7 @@ var _song_duration: float = 90.0
 var _failed: bool = false
 var _result_score_percent: float = 0.0
 var _result_transitioning: bool = false
+var _record_celebration_active: bool = false
 var _song_audio_started: bool = false
 var _song_finish_requested: bool = false
 var _best_score: float = 0.0
@@ -265,9 +267,10 @@ func _process(delta: float) -> void:
 			if _song_time >= _song_duration - 0.02:
 				_request_song_finish()
 		GameState.RESULT:
-			_update_result_countdown()
-			if _state_time >= RESULT_SECONDS:
-				_expire_result()
+			if not _record_celebration_active:
+				_update_result_countdown()
+				if _state_time >= RESULT_SECONDS:
+					_expire_result()
 
 	_renderer.set_runtime(
 		_events,
@@ -984,6 +987,9 @@ func _update_slide_draw_progress(delta: float) -> void:
 
 		var target: float = clampf(float(event.get("_visual_progress", 0.0)), 0.0, 1.0)
 		var drawn: float = clampf(float(event.get("_draw_progress", 0.0)), 0.0, 1.0)
+		if bool(event.get("_resolved", false)):
+			event["_draw_progress"] = target
+			continue
 		if is_equal_approx(drawn, target):
 			continue
 
@@ -1004,9 +1010,7 @@ func _update_notes_and_misses() -> void:
 	for index in range(_live_events.size() - 1, -1, -1):
 		var event: Dictionary = _live_events[index] as Dictionary
 		if bool(event.get("_resolved", false)):
-			# O arrasto resolvido continua sendo desenhado ate a estrela
-			# terminar o trajeto; quem cuida disso e o renderer, que le
-			# _events. Aqui ele so sai da lista de trabalho.
+			# Resolvido sai da lista de trabalho e da camada visual no mesmo quadro.
 			_live_events.remove_at(index)
 			continue
 
@@ -1520,7 +1524,10 @@ func _resolve_hit(event: Dictionary, kind: String, quality: float) -> void:
 
 	var effect_kind: String = "tap"
 	if kind == "slide":
+		# Mantem a assinatura visual de cada estrela no BURST. O sprite que
+		# percorre o caminho e encerrado separadamente no mesmo quadro.
 		effect_kind = "slide"
+		event["_draw_progress"] = event.get("_visual_progress", 1.0)
 	elif kind == "hold":
 		effect_kind = "hold"
 	# Uma unica cor governa todo o feedback deste acerto: burst, roda,
@@ -1669,6 +1676,8 @@ func _finish_game(failed: bool) -> void:
 	_set_gameplay_hud_visible(false)
 
 	var score: float = _score_percent()
+	var previous_best: float = _best_score
+	var is_new_record: bool = score > previous_best + 0.005
 	_result_score_percent = score
 	_result_credits_shown = ArcadeSettings.credits
 	_apply_result_theme()
@@ -1686,7 +1695,67 @@ func _finish_game(failed: bool) -> void:
 	_fit_record_badge()
 	LED_CLIENT.clear_all()
 
-	_play_game_over_sting()
+	if is_new_record:
+		_show_new_record_celebration(score, previous_best)
+	else:
+		_play_game_over_sting()
+		_reveal_result_panel()
+
+
+func _show_new_record_celebration(score: float, previous_best: float) -> void:
+	if not ResourceLoader.exists(NEW_RECORD_SCENE_PATH):
+		_reveal_result_panel()
+		return
+	var packed := load(NEW_RECORD_SCENE_PATH) as PackedScene
+	if packed == null:
+		_reveal_result_panel()
+		return
+	var celebration := packed.instantiate()
+	if celebration == null or not celebration.has_method("configure"):
+		_reveal_result_panel()
+		return
+
+	_record_celebration_active = true
+	_state_time = 0.0
+	celebration.call(
+		"configure",
+		str(_song.get("title", _song_id())),
+		score,
+		previous_best,
+		_primary_color(),
+		_accent_color(),
+		Rect2(_top_panel.position, _top_panel.size),
+		_center,
+		_radius
+	)
+	if celebration.has_signal("celebration_finished"):
+		celebration.connect(
+			"celebration_finished",
+			_on_record_celebration_finished.bind(celebration),
+			CONNECT_ONE_SHOT
+		)
+	# A interface do jogo vive em CanvasLayer. Na arvore 2D comum, z_index
+	# nunca supera essa camada; por isso o anuncio antigo ficava escondido.
+	# Inserido no proprio HUD, o recorde cobre tudo dentro das duas telas.
+	_hud_layer.add_child(celebration)
+	_start_record_led_celebration()
+
+
+func _start_record_led_celebration() -> void:
+	var client := get_node_or_null("/root/LedClient")
+	if client != null and client.has_method("end_game"):
+		client.call("end_game")
+	LED_CLIENT.record_celebration(_primary_color(), _accent_color())
+
+
+func _on_record_celebration_finished(celebration: Node) -> void:
+	if is_instance_valid(celebration):
+		celebration.queue_free()
+	# HIT no firmware volta ao estado anterior; limpar explicitamente evita
+	# qualquer lane ou botao permanecer aceso depois do anuncio.
+	LED_CLIENT.clear_all()
+	_record_celebration_active = false
+	_state_time = 0.0
 	_reveal_result_panel()
 
 
@@ -1939,7 +2008,7 @@ func _touch_rect(control: Control) -> Rect2:
 
 
 func _can_act_on_result() -> bool:
-	if _state != GameState.RESULT or _result_transitioning:
+	if _state != GameState.RESULT or _result_transitioning or _record_celebration_active:
 		return false
 	# Descarta o toque/START residual do ultimo hit. Sem esta trava o modal
 	# podia ser criado e a cena recarregada no mesmo instante, parecendo

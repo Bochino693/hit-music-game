@@ -21,6 +21,8 @@ config/icon="res://icon.svg"
 
 LedClient="*res://scripts/led_client.gd"
 ArcadeSettings="*res://scripts/arcade_settings.gd"
+ArcadeShell="*res://scripts/arcade_shell.gd"
+ArcadeCounters="*res://scripts/arcade_counters.gd"
 
 [display]
 

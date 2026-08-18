@@ -14,6 +14,9 @@ signal credit_inserted(total: int)
 
 const SETTINGS_PATH: String = "user://hit_music_arcade_settings.json"
 const CREDIT_INPUT_COOLDOWN_MSEC: int = 140
+## SELECT e o botao fisico oficial de ficha. input_credito permanece como
+## compatibilidade com gabinetes que ja tenham um pulso dedicado de moeda.
+const CREDIT_ACTIONS: Array[String] = ["input_select", "input_credito"]
 
 enum Mode {
 	FREE,
@@ -31,9 +34,16 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
-	if not InputMap.has_action("input_credito"):
+	# No modo livre SELECT nao altera saldo. No modo credito o autoload roda
+	# sempre, inclusive em gameplay, resultado e transicoes de cena.
+	if not is_credit_mode():
 		return
-	if not Input.is_action_just_pressed("input_credito"):
+	var credit_pressed: bool = false
+	for action in CREDIT_ACTIONS:
+		if InputMap.has_action(action) and Input.is_action_just_pressed(action):
+			credit_pressed = true
+			break
+	if not credit_pressed:
 		return
 
 	var now_msec: int = Time.get_ticks_msec()

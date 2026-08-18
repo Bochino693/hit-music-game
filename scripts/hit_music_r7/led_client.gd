@@ -163,6 +163,12 @@ static func ready() -> void:
 	send_raw("READY")
 
 
+static func record_celebration(primary: Color, accent: Color) -> void:
+	clear_all()
+	for lane in range(8):
+		hit_lane(lane, primary if lane % 2 == 0 else accent, 1200)
+
+
 static func _rgb(color: Color) -> Vector3i:
 	return Vector3i(
 		int(round(clampf(color.r, 0.0, 1.0) * 255.0)),

@@ -1,0 +1,75 @@
+=========================================================
+ HIT MUSIC — AJUSTES DE OPERACAO
+=========================================================
+
+INSTALAR
+  Extraia o ZIP INTEIRO na pasta do projeto.
+  Windows: INSTALAR.bat   |   Mac/Linux: ./INSTALAR.sh
+  Backup automatico em backup_operacao_<data>/.
+  O project.godot NAO e sobrescrito: recebe so as duas linhas de autoload.
+
+
+1) F9 EM TODO O JOGO, MENOS EM PARTIDA
+   O atalho dependia de cada tela lembrar de chamar o SettingsGate. Tres
+   telas chamavam; o resto do jogo nao tinha F9, e tela nova nasceria sem
+   ele. Agora quem escuta e o autoload ArcadeShell, uma vez so.
+
+   Continua bloqueado durante a musica. Mas a cena da musica COMECA como
+   tela de dificuldade, com a musica parada — ali o F9 ja funcionava e
+   continua. Por isso a cena responde em_partida_ativa() e e ela quem
+   decide.
+
+2) CONTADOR DE PARTIDAS  (Configuracoes > CONTADOR DE PARTIDAS)
+   Conta os STARTs por modo (LIVRE / CREDITO) em DOIS baldes separados:
+
+       FABRICA / BANCADA   <- suas horas de teste
+       CLIENTE             <- o uso real na rua
+
+   O interruptor fica no topo de scripts/arcade_counters.gd:
+
+       const NO_CLIENTE: bool = false     # vire para true ANTES de exportar
+
+   false = tudo cai em FABRICA. true = tudo cai em CLIENTE. Virar o
+   interruptor NAO zera nada: so muda o destino dali pra frente, entao
+   depois da pra olhar quanto foi teste e quanto foi cliente. A tela mostra
+   os dois lado a lado e a soma geral.
+
+   Conta o START que ABRE partida. O aperto recusado por falta de credito
+   nao entra — senao o numero viraria "quantas vezes bateram no botao", nao
+   quantas partidas a maquina abriu.
+
+3) TESTE DE INPUTS: CREDITO NO LUGAR DE START
+   A caixa central passa a ler input_credito. START voce prova em qualquer
+   partida; credito so daria pra provar gastando ficha.
+
+4) CARTAO DE CREDITOS CENTRALIZADO
+   O rotulo ocupava o cartao inteiro alinhado A DIREITA, o que jogava
+   "CREDITOS / 07" contra a borda. Agora centralizado. Acima de 999 vira
+   "999+", porque o cartao tem largura fixa e numero sem limite empurraria o
+   layout. Conferido renderizando com 007 e com 999.
+
+5) TRAVAMENTO DE QUIOSQUE
+   O X da janela e o Alt+F4 nao fecham mais o jogo. Tela cheia exclusiva,
+   sempre no topo, sem borda, cursor escondido, e o foco volta sozinho se
+   algo roubar a frente.
+
+   SAIDA: Ctrl+Tab.
+
+   ATE ONDE ISSO VAI, SEM ENFEITE: isto e trava de aplicacao, nao de
+   sistema. Godot nao intercepta Ctrl+Alt+Del, tecla Windows, Alt+Tab nem
+   o Gerenciador de Tarefas — nenhum programa comum intercepta, isso e do
+   Windows. O que o jogo garante e voltar pra frente sozinho. Para travar
+   de verdade o Windows precisa ser configurado por fora (conta de quiosque
+   / Shell Launcher, teclas desabilitadas por politica). Se quiser, eu monto
+   o passo a passo dessa parte.
+
+
+CONFERIDO (Godot 4.6 de verdade)
+   jogo sobe sem erro de script
+   res://tools/smoke_arcade.tscn ......... SMOKE_ARCADE_OK
+     - contadores por modo e por balde, e o balde vizinho intacto
+     - persistencia (sobrevive ao recarregar)
+     - carmine/demon/naruto/user_song contam como PARTIDA
+     - opening/config NAO contam
+     - F9 bloqueado com musica tocando, liberado na tela de dificuldade
+   cartao de creditos renderizado com 007 e 999
