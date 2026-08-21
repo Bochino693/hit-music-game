@@ -16,6 +16,13 @@ extends Node2D
 
 const SETTINGS_GATE: Script = preload("res://scripts/hit_music_r7/settings_gate.gd")
 const USER_CATALOG: Script = preload("res://scripts/hit_music_r7/user_catalog.gd")
+const LED_CLIENT: Script = preload("res://scripts/hit_music_r7/led_client.gd")
+
+## Atraso entre o CLEAR que cancela a serial da tela anterior e o primeiro
+## quadro de LED desta tela. A bridge le o ui_state.cmd a cada 5 ms; sem a
+## pausa os dois estados sairiam na mesma escrita e o CLEAR nunca chegaria
+## ao Arduino — a mesa continuaria com o ATTRACT da abertura.
+const LED_HANDOFF_SEG: float = 0.12
 
 const LANE_COUNT: int = 8
 const LANE_ACTIONS: Array[String] = [
@@ -40,6 +47,13 @@ enum MenuItem {
 }
 
 const MENU_ITEM_COUNT: int = 7
+
+## Posição do botão IMPORTAR TODAS na navegação da tela de músicas: ele
+## fica ANTES do primeiro pacote, por isso o índice -1.
+const IMPORT_ALL_INDEX: int = -1
+
+## Quantos nomes de pacote com problema cabem no relatório final.
+const REPORT_NAME_LIMIT: int = 3
 
 var _return_path: String = "res://scenes/opening.tscn"
 var _cursor: int = 0
@@ -77,6 +91,20 @@ var _music_labels: Array[Label] = []
 var _music_row_indices: Array[int] = []
 var _usb_packages: Array = []
 
+# Botão IMPORTAR TODAS: primeira parada do cursor na tela de músicas.
+var _import_all_panel: Panel
+var _import_all_label: Label
+
+# Importação em lote (pendrive cheio de músicas).
+var _batch_active: bool = false
+var _batch_queue: Array[int] = []
+var _batch_position: int = 0
+var _batch_total: int = 0
+var _batch_ok: int = 0
+var _batch_skipped: int = 0
+var _batch_failures: Array[String] = []
+var _batch_invalid: Array[String] = []
+
 # Botão VOLTAR dedicado ao touch nas telas internas.
 var _touch_layer: CanvasLayer
 var _touch_back_panel: Panel
@@ -112,9 +140,7 @@ func _ready() -> void:
 	_return_path = SETTINGS_GATE.return_path()
 	Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
 
-	var client := get_node_or_null("/root/LedClient")
-	if client != null and client.has_method("begin_menu"):
-		client.call("begin_menu")
+	_iniciar_serial_da_tela()
 
 	var screen: Vector2 = get_viewport_rect().size
 	_calculate_machine_geometry(screen)
@@ -150,6 +176,12 @@ func _process(delta: float) -> void:
 
 	if _bpm_analysis_active:
 		_process_bpm_analysis(delta)
+		return
+
+	if _batch_active:
+		# Um pacote por quadro: o painel continua respondendo e o
+		# contador anda na tela enquanto o pendrive é copiado.
+		_passo_lote()
 		return
 
 	if _in_music_view:
@@ -207,10 +239,24 @@ func _handle_touch(position_value: Vector2) -> void:
 		_handle_back()
 		return
 
-	if _bpm_analysis_active:
+	if _bpm_analysis_active or _batch_active:
 		return
 
 	if _in_music_view:
+		if (
+			_import_all_panel != null
+			and is_instance_valid(_import_all_panel)
+			and _import_all_panel.visible
+			and Rect2(
+				_import_all_panel.global_position,
+				_import_all_panel.size
+			).has_point(position_value)
+		):
+			_music_cursor = IMPORT_ALL_INDEX
+			_refresh_music_view()
+			_activate_music_cursor()
+			return
+
 		for slot in range(_music_rows.size()):
 			var row: Panel = _music_rows[slot]
 			if not row.visible:
@@ -331,7 +377,7 @@ func _move_cursor(direction: int) -> void:
 		return
 	_cursor = posmod(_cursor + direction, _menu_labels.size())
 	_refresh_menu_texts()
-	_menu_feedback("menu_next_feedback")
+	_nav_feedback(direction)
 
 
 func _activate_cursor() -> void:
@@ -360,6 +406,11 @@ func _activate_cursor() -> void:
 
 
 func _handle_back() -> void:
+	if _batch_active:
+		# Interrompe o lote sem sair da tela: o operador vê o relatório
+		# do que entrou até aqui e pode retomar depois.
+		_encerrar_lote(true)
+		return
 	if _bpm_analysis_active:
 		_cancel_bpm_analysis("ANÁLISE CANCELADA")
 		return
@@ -379,18 +430,98 @@ func _close_settings() -> void:
 	_cancel_bpm_analysis("")
 	_cleanup_bpm_bus()
 
-	var client := get_node_or_null("/root/LedClient")
-	if client != null and client.has_method("clear_all"):
-		client.call("clear_all")
+	# Apaga a mesa ANTES de trocar de cena: a proxima tela (abertura ou
+	# seletor) grava o proprio quadro no _ready() e nao herda o menu
+	# aceso do painel.
+	LED_CLIENT.clear_all()
 
 	Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
 	get_tree().change_scene_to_file(_return_path)
 
 
-func _menu_feedback(method_name: String) -> void:
+## ---------------------------------------------------------------
+## LEDS DA MESA NA TELA DE CONFIGURACOES
+##
+## Os tres botoes que comandam este painel ficam ACESOS o tempo todo,
+## com a mesma logica do seletor de musicas:
+##   A (lane 0) = sobe            B (lane 1) = confirma / START
+##   E (lane 4) = desce
+##
+## Antes nada acendia aqui. Dois motivos, os dois corrigidos:
+##   1. o painel chamava metodos (`menu_next_feedback`, `clear_all`) que
+##      so existem no ADAPTADOR res://scripts/hit_music_r7/led_client.gd,
+##      nunca no Autoload /root/LedClient — protegidos por has_method(),
+##      falhavam calados;
+##   2. a tela entrava em LedMode.MENU sem nunca mandar um quadro MENU,
+##      entao a mesa seguia rodando o ATTRACT gravado pela abertura.
+## ---------------------------------------------------------------
+
+## Cancela a serial da tela anterior e sobe o quadro desta. O CLEAR sai
+## primeiro (dentro de begin_settings) e o MENU logo depois, com a pausa
+## que a bridge precisa para enxergar os dois estados.
+func _iniciar_serial_da_tela() -> void:
 	var client := get_node_or_null("/root/LedClient")
-	if client != null and client.has_method(method_name):
-		client.call(method_name)
+	if client != null and client.has_method("begin_settings"):
+		client.call("begin_settings")
+	elif client != null and client.has_method("begin_stage"):
+		# Compatibilidade com versoes do Autoload sem begin_settings().
+		client.call("begin_stage")
+		LED_CLIENT.clear_all()
+
+	_agendar_leds_menu()
+
+
+func _agendar_leds_menu() -> void:
+	var tree: SceneTree = get_tree()
+	if tree == null:
+		_aplicar_leds_menu()
+		return
+
+	var timer: SceneTreeTimer = tree.create_timer(LED_HANDOFF_SEG, false)
+	timer.timeout.connect(_aplicar_leds_menu)
+
+
+## Quadro persistente do painel: A sobe, B confirma, E desce.
+func _aplicar_leds_menu() -> void:
+	if not is_inside_tree():
+		return
+	if _in_test_view:
+		# O teste governa lane a lane; nao pisa nele.
+		return
+
+	LED_CLIENT.menu_state_three(
+		LED_CLIENT.MENU_NEXT_COLOR,
+		LED_CLIENT.MENU_SELECT_COLOR,
+		LED_CLIENT.MENU_NEXT_COLOR,
+		LED_CLIENT.NAV_NEXT_LANE,
+		LED_CLIENT.NAV_SELECT_LANE,
+		LED_CLIENT.NAV_DOWN_LANE
+	)
+
+
+## Flash curto no botao que o operador acabou de apertar. Depois do flash
+## o firmware devolve o quadro MENU, entao os tres continuam acesos.
+func _menu_feedback(method_name: String) -> void:
+	if method_name == "menu_select_feedback":
+		LED_CLIENT.menu_select_feedback()
+	else:
+		LED_CLIENT.menu_next_feedback()
+
+
+## Feedback de navegacao no botao certo: A quando sobe, E quando desce.
+func _nav_feedback(direction: int) -> void:
+	if direction < 0:
+		LED_CLIENT.hit_lane(
+			LED_CLIENT.NAV_NEXT_LANE,
+			LED_CLIENT.MENU_NEXT_COLOR,
+			170
+		)
+	else:
+		LED_CLIENT.hit_lane(
+			LED_CLIENT.NAV_DOWN_LANE,
+			LED_CLIENT.MENU_NEXT_COLOR,
+			170
+		)
 
 
 ## ---------------------------------------------------------------
@@ -718,8 +849,8 @@ func _build_music_view() -> void:
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
-	_music_title.position = Vector2(panel_size.x * 0.12, panel_size.y * 0.055)
-	_music_title.size = Vector2(panel_size.x * 0.76, panel_size.y * 0.080)
+	_music_title.position = Vector2(panel_size.x * 0.12, panel_size.y * 0.045)
+	_music_title.size = Vector2(panel_size.x * 0.76, panel_size.y * 0.078)
 	_music_title.add_theme_color_override("font_color", Color(0.10, 0.85, 1.0, 1.0))
 	_music_title.clip_text = true
 	_music_panel.add_child(_music_title)
@@ -730,16 +861,38 @@ func _build_music_view() -> void:
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
-	_music_status.position = Vector2(panel_size.x * 0.14, panel_size.y * 0.145)
-	_music_status.size = Vector2(panel_size.x * 0.72, panel_size.y * 0.075)
+	_music_status.position = Vector2(panel_size.x * 0.14, panel_size.y * 0.128)
+	_music_status.size = Vector2(panel_size.x * 0.72, panel_size.y * 0.070)
 	_music_status.clip_text = true
 	_music_status.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_music_status.add_theme_color_override("font_color", Color(0.70, 0.78, 0.90, 1.0))
 	_music_panel.add_child(_music_status)
 
-	var row_y: float = panel_size.y * 0.245
-	var row_pitch: float = panel_size.y * 0.093
-	var row_height: float = panel_size.y * 0.072
+	# Botão de lote: um pendrive de cliente chega com dezenas de pastas e
+	# importar uma a uma (com 16 s de análise de BPM em cada) era o gargalo
+	# da instalação. Ele fica no topo da lista, como primeira parada do
+	# cursor, para o operador achar sem procurar.
+	_import_all_panel = Panel.new()
+	_import_all_panel.position = Vector2(panel_size.x * 0.145, panel_size.y * 0.210)
+	_import_all_panel.size = Vector2(panel_size.x * 0.71, panel_size.y * 0.074)
+	_import_all_panel.clip_contents = true
+	_import_all_panel.add_theme_stylebox_override("panel", _row_style(false))
+	_music_panel.add_child(_import_all_panel)
+
+	_import_all_label = _make_label(
+		"IMPORTAR TODAS",
+		int(_radius * 0.031),
+		HORIZONTAL_ALIGNMENT_CENTER,
+		font
+	)
+	_import_all_label.size = _import_all_panel.size
+	_import_all_label.clip_text = true
+	_import_all_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_import_all_panel.add_child(_import_all_label)
+
+	var row_y: float = panel_size.y * 0.310
+	var row_pitch: float = panel_size.y * 0.081
+	var row_height: float = panel_size.y * 0.066
 
 	# Cinco linhas visíveis; listas maiores são paginadas pelo cursor.
 	for i in range(5):
@@ -769,15 +922,15 @@ func _build_music_view() -> void:
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
 	)
-	_music_detail.position = Vector2(panel_size.x * 0.13, panel_size.y * 0.725)
-	_music_detail.size = Vector2(panel_size.x * 0.74, panel_size.y * 0.105)
+	_music_detail.position = Vector2(panel_size.x * 0.13, panel_size.y * 0.716)
+	_music_detail.size = Vector2(panel_size.x * 0.74, panel_size.y * 0.115)
 	_music_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_music_detail.clip_text = true
 	_music_detail.add_theme_color_override("font_color", Color(0.72, 0.80, 0.92, 1.0))
 	_music_panel.add_child(_music_detail)
 
 	_music_hint = _make_label(
-		"A ↑   E ↓   B IMPORTA   •   TOQUE 2X INSTALA   •   VOLTAR",
+		"A ↑   E ↓   B IMPORTA   •   IMPORTAR TODAS NO TOPO   •   VOLTAR",
 		int(_radius * 0.021),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		font
@@ -797,6 +950,10 @@ func _open_music_view() -> void:
 	_set_touch_back_visible(true)
 	Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
 
+	# Abre com o cursor no botão de lote: é a ação que o operador usa em
+	# 9 de 10 instalações.
+	_music_cursor = IMPORT_ALL_INDEX
+
 	_set_top_context(
 		"INSTALAÇÃO DE MÚSICAS",
 		"A: SUBIR   •   E: DESCER   •   B: IMPORTAR   •   SELECT/F9: VOLTAR",
@@ -806,6 +963,7 @@ func _open_music_view() -> void:
 
 
 func _close_music_view() -> void:
+	_cancelar_lote(true)
 	_cancel_bpm_analysis("")
 	_in_music_view = false
 	_music_layer.visible = false
@@ -824,12 +982,19 @@ func _scan_usb() -> void:
 	_music_status.text = "ESCANEANDO PENDRIVES..."
 	_music_status.add_theme_color_override("font_color", Color(0.20, 0.88, 1.0, 1.0))
 	_usb_packages = USER_CATALOG.scan_usb_packages()
-	_music_cursor = clampi(_music_cursor, 0, maxi(0, _usb_packages.size() - 1))
+	# O -1 (IMPORTAR TODAS) é uma posição válida do cursor e precisa
+	# sobreviver ao reescaneamento que roda depois de cada importação.
+	if _music_cursor >= 0:
+		_music_cursor = clampi(_music_cursor, 0, maxi(0, _usb_packages.size() - 1))
 	_music_scan_busy = false
 	_refresh_music_view()
 
 
 func _process_music_inputs() -> void:
+	if _batch_active:
+		# Durante o lote os botões de navegação ficam parados de
+		# propósito: só VOLTAR/SELECT/F9 interrompe.
+		return
 	if Input.is_action_just_pressed("input_a"):
 		_move_music_cursor(-1)
 		return
@@ -843,15 +1008,34 @@ func _process_music_inputs() -> void:
 		_activate_music_cursor()
 
 
+## Navegação da tela de músicas: [IMPORTAR TODAS] + um item por pacote.
+func _proximo_cursor_musica(direction: int) -> int:
+	var total: int = _usb_packages.size() + 1
+	var posicao: int = posmod((_music_cursor + 1) + direction, total)
+	return posicao - 1
+
+
 func _move_music_cursor(direction: int) -> void:
+	if _batch_active:
+		return
 	if _usb_packages.is_empty():
 		return
-	_music_cursor = posmod(_music_cursor + direction, _usb_packages.size())
+	_music_cursor = _proximo_cursor_musica(direction)
 	_refresh_music_view()
-	_menu_feedback("menu_next_feedback")
+	_nav_feedback(direction)
 
 
 func _activate_music_cursor() -> void:
+	if _batch_active:
+		return
+
+	if _music_cursor == IMPORT_ALL_INDEX:
+		if _usb_packages.is_empty():
+			_scan_usb()
+			return
+		_iniciar_lote()
+		return
+
 	if _usb_packages.is_empty():
 		_scan_usb()
 		return
@@ -893,6 +1077,7 @@ func _refresh_music_view() -> void:
 
 	if count == 0:
 		_music_row_indices.clear()
+		_music_cursor = IMPORT_ALL_INDEX
 		_music_status.text = "NENHUM PACOTE ENCONTRADO — B PARA REESCANEAR"
 		_music_status.add_theme_color_override("font_color", Color(1.0, 0.72, 0.30, 1.0))
 		_music_detail.text = (
@@ -901,6 +1086,7 @@ func _refresh_music_view() -> void:
 		)
 		for i in range(_music_labels.size()):
 			_music_rows[i].visible = false
+		_atualizar_botao_lote(0, 0, 0)
 		_fit_multiline_label(_music_detail, int(_radius * 0.026), 10)
 		return
 
@@ -908,16 +1094,40 @@ func _refresh_music_view() -> void:
 		row.visible = true
 
 	var usb_installed: int = 0
+	var usb_invalid: int = 0
 	for package_value in _usb_packages:
-		if package_value is Dictionary and bool((package_value as Dictionary).get("installed", false)):
+		if not (package_value is Dictionary):
+			continue
+		var item: Dictionary = package_value as Dictionary
+		if not bool(item.get("valid", false)):
+			usb_invalid += 1
+		elif bool(item.get("installed", false)):
 			usb_installed += 1
 
-	var new_count: int = count - usb_installed
-	_music_status.text = "%d NOVA(S)   •   %d JÁ INSTALADA(S)" % [
-		new_count,
-		usb_installed,
-	]
-	_music_status.add_theme_color_override("font_color", Color(0.32, 1.0, 0.62, 1.0))
+	var new_count: int = count - usb_installed - usb_invalid
+
+	if _batch_active:
+		_music_status.text = "IMPORTANDO %d/%d   •   %d OK   •   %d FALHA(S)" % [
+			mini(_batch_position + 1, _batch_total),
+			_batch_total,
+			_batch_ok,
+			_batch_failures.size(),
+		]
+		_music_status.add_theme_color_override("font_color", Color(1.0, 0.84, 0.24, 1.0))
+	else:
+		_music_status.text = "%d NOVA(S)   •   %d JÁ INSTALADA(S)   •   %d COM ERRO" % [
+			new_count,
+			usb_installed,
+			usb_invalid,
+		]
+		_music_status.add_theme_color_override(
+			"font_color",
+			Color(1.0, 0.72, 0.30, 1.0)
+			if usb_invalid > 0
+			else Color(0.32, 1.0, 0.62, 1.0)
+		)
+
+	_atualizar_botao_lote(new_count, usb_installed, usb_invalid)
 
 	var visible_count: int = _music_labels.size()
 	_music_row_indices.clear()
@@ -949,14 +1159,22 @@ func _refresh_music_view() -> void:
 			else "BPM: ANALISAR"
 		)
 
+		# "JÁ IMPORTADA" vem do histórico em disco: mesmo que o operador
+		# tenha apagado a música da máquina, a lista lembra que aquela
+		# pasta já passou por aqui e o que aconteceu com ela.
+		var log_status: String = str(package.get("log_status", ""))
+		var situacao: String = (
+			"JÁ INSTALADA"
+			if installed
+			else ("NOVA" if valid else "ERRO")
+		)
+		if not installed and valid and log_status == "erro":
+			situacao = "FALHOU ANTES"
+
 		_music_labels[slot].text = "%s   •   %s   •   %s" % [
 			str(package.get("name", "?")).to_upper(),
 			bpm_text,
-			(
-				"JÁ INSTALADA"
-				if installed
-				else ("NOVA" if valid else "ERRO")
-			),
+			situacao,
 		]
 
 		var selected: bool = index == _music_cursor
@@ -972,6 +1190,11 @@ func _refresh_music_view() -> void:
 			)
 		)
 		_fit_label_to_width(_music_labels[slot], int(_radius * 0.031), 10)
+
+	if _music_cursor == IMPORT_ALL_INDEX:
+		_music_detail.text = _texto_detalhe_lote(new_count, usb_installed, usb_invalid)
+		_fit_multiline_label(_music_detail, int(_radius * 0.026), 10)
+		return
 
 	var selected_package: Dictionary = _usb_packages[_music_cursor]
 	if bool(selected_package.get("installed", false)):
@@ -1007,7 +1230,7 @@ func _refresh_music_view() -> void:
 
 
 func _import_package(package: Dictionary, bpm: float) -> void:
-	var result: Dictionary = USER_CATALOG.import_usb_package(package, bpm)
+	var result: Dictionary = _importar_pacote_resultado(package, bpm)
 
 	if bool(result.get("ok", false)):
 		_music_status.add_theme_color_override("font_color", Color(0.32, 1.0, 0.62, 1.0))
@@ -1024,6 +1247,285 @@ func _import_package(package: Dictionary, bpm: float) -> void:
 		_music_status.text = str(result.get("erro", "Falha ao importar."))
 
 	_refresh_menu_texts()
+
+
+## Importa e ANOTA o resultado no histórico em disco. É essa anotação que
+## permite refazer uma importação em lote sem repetir trabalho e sem
+## perder de vista o pacote que falhou na tentativa anterior.
+func _importar_pacote_resultado(package: Dictionary, bpm: float) -> Dictionary:
+	var result: Dictionary = USER_CATALOG.import_usb_package(package, bpm)
+
+	if bool(result.get("ok", false)):
+		USER_CATALOG.import_log_record(package, "ok", "%d BPM" % roundi(bpm))
+	elif bool(result.get("already_installed", false)):
+		USER_CATALOG.import_log_record(
+			package,
+			"duplicada",
+			str(result.get("erro", ""))
+		)
+	else:
+		USER_CATALOG.import_log_record(
+			package,
+			"erro",
+			str(result.get("erro", "Falha ao importar."))
+		)
+
+	return result
+
+
+## ---------------------------------------------------------------
+## IMPORTACAO EM LOTE (PENDRIVE CHEIO)
+##
+## Um pacote por quadro: o painel continua desenhando, o contador anda na
+## tela e VOLTAR interrompe a qualquer momento. Pacotes sem BPM gravado
+## passam pela análise de áudio (~16 s) e o lote continua sozinho quando
+## ela termina.
+##
+## Nada é importado duas vezes: o que já está na máquina é PULADO (e
+## contado), e cada resultado vai para o histórico em disco — então
+## repetir a importação depois de trocar o pendrive, ou depois de um
+## cancelamento, retoma exatamente de onde parou.
+## ---------------------------------------------------------------
+
+func _iniciar_lote() -> void:
+	if _batch_active or _bpm_analysis_active:
+		return
+
+	_batch_queue.clear()
+	_batch_failures.clear()
+	_batch_invalid.clear()
+	_batch_ok = 0
+	_batch_skipped = 0
+	_batch_position = 0
+
+	for index in range(_usb_packages.size()):
+		var package_value: Variant = _usb_packages[index]
+		if not (package_value is Dictionary):
+			continue
+
+		var package: Dictionary = package_value as Dictionary
+
+		if not bool(package.get("valid", false)):
+			_batch_invalid.append(_descricao_falha(package, str(package.get("error", ""))))
+			continue
+
+		if bool(package.get("installed", false)):
+			_batch_skipped += 1
+			continue
+
+		_batch_queue.append(index)
+
+	_batch_total = _batch_queue.size()
+
+	if _batch_total == 0:
+		_menu_feedback("menu_next_feedback")
+		_mostrar_relatorio_lote(false)
+		return
+
+	_batch_active = true
+	_menu_feedback("menu_select_feedback")
+	_refresh_music_view()
+
+
+func _passo_lote() -> void:
+	if not _batch_active or _bpm_analysis_active:
+		return
+
+	if _batch_position >= _batch_queue.size():
+		_encerrar_lote(false)
+		return
+
+	var index: int = _batch_queue[_batch_position]
+	if index < 0 or index >= _usb_packages.size():
+		_batch_position += 1
+		return
+
+	var package_value: Variant = _usb_packages[index]
+	if not (package_value is Dictionary):
+		_batch_position += 1
+		return
+
+	var package: Dictionary = package_value as Dictionary
+	_refresh_music_view()
+
+	var bpm: float = float(package.get("bpm", 0.0))
+	if bpm >= 40.0 and bpm <= 260.0:
+		_registrar_resultado_lote(package, _importar_pacote_resultado(package, bpm))
+		_batch_position += 1
+		return
+
+	# Sem BPM no arquivo: a análise de áudio assume e o lote continua em
+	# _finish_bpm_analysis().
+	if not _start_bpm_analysis(package):
+		_batch_failures.append(
+			_descricao_falha(package, "MP3 não pôde ser analisado")
+		)
+		USER_CATALOG.import_log_record(package, "erro", "MP3 não pôde ser analisado")
+		_batch_position += 1
+
+
+func _registrar_resultado_lote(package: Dictionary, result: Dictionary) -> void:
+	if bool(result.get("ok", false)):
+		_batch_ok += 1
+	elif bool(result.get("already_installed", false)):
+		_batch_skipped += 1
+	else:
+		_batch_failures.append(
+			_descricao_falha(package, str(result.get("erro", "Falha ao importar.")))
+		)
+
+
+func _cancelar_lote(silencioso: bool) -> void:
+	if not _batch_active:
+		return
+	_encerrar_lote(true, silencioso)
+
+
+func _encerrar_lote(cancelado: bool, silencioso: bool = false) -> void:
+	_batch_active = false
+	_cancel_bpm_analysis("")
+	_refresh_menu_texts()
+
+	if silencioso:
+		return
+
+	# Reescaneia para que as recém-instaladas apareçam como JÁ INSTALADA:
+	# é o que faz uma segunda tentativa pular o que já entrou.
+	_scan_usb()
+	_mostrar_relatorio_lote(cancelado)
+
+
+## Relatório final: quantas entraram, quantas foram puladas e — o ponto
+## que o operador precisa levar para o cliente — QUAIS não funcionaram.
+func _mostrar_relatorio_lote(cancelado: bool) -> void:
+	if _music_status == null or not is_instance_valid(_music_status):
+		return
+
+	var problemas: Array[String] = []
+	problemas.append_array(_batch_failures)
+	problemas.append_array(_batch_invalid)
+
+	if cancelado:
+		_music_status.text = "IMPORTAÇÃO CANCELADA EM %d/%d   •   %d OK   •   %d FALHA(S)" % [
+			mini(_batch_position, _batch_total),
+			_batch_total,
+			_batch_ok,
+			problemas.size(),
+		]
+		_music_status.add_theme_color_override("font_color", Color(1.0, 0.72, 0.30, 1.0))
+	elif _batch_total == 0:
+		_music_status.text = "NADA NOVO PARA IMPORTAR   •   %d JÁ INSTALADA(S)   •   %d COM ERRO" % [
+			_batch_skipped,
+			_batch_invalid.size(),
+		]
+		_music_status.add_theme_color_override("font_color", Color(0.32, 1.0, 0.62, 1.0))
+	else:
+		_music_status.text = "IMPORTAÇÃO CONCLUÍDA   •   %d OK   •   %d PULADA(S)   •   %d FALHA(S)" % [
+			_batch_ok,
+			_batch_skipped,
+			problemas.size(),
+		]
+		_music_status.add_theme_color_override(
+			"font_color",
+			Color(1.0, 0.72, 0.30, 1.0)
+			if not problemas.is_empty()
+			else Color(0.32, 1.0, 0.62, 1.0)
+		)
+
+	if _music_detail == null or not is_instance_valid(_music_detail):
+		return
+
+	if problemas.is_empty():
+		_music_detail.text = (
+			"Nenhum pacote com problema. Importar de novo é seguro: "
+			+ "as músicas que já entraram são puladas automaticamente."
+		)
+	else:
+		var mostrados: Array[String] = []
+		for texto in problemas:
+			if mostrados.size() >= REPORT_NAME_LIMIT:
+				break
+			mostrados.append(texto)
+
+		var restante: int = problemas.size() - mostrados.size()
+		_music_detail.text = (
+			"NÃO FUNCIONARAM: "
+			+ "   |   ".join(mostrados)
+			+ ("   |   + %d PACOTE(S)" % restante if restante > 0 else "")
+		)
+
+	_fit_multiline_label(_music_detail, int(_radius * 0.026), 10)
+
+
+func _descricao_falha(package: Dictionary, motivo: String) -> String:
+	var nome: String = str(package.get("name", "")).strip_edges()
+	if nome.is_empty():
+		nome = str(package.get("folder", "?")).get_file()
+	var texto: String = nome.to_upper()
+	if not motivo.strip_edges().is_empty():
+		texto += " (" + motivo.strip_edges() + ")"
+	return texto
+
+
+func _atualizar_botao_lote(
+	novas: int,
+	instaladas: int,
+	invalidas: int
+) -> void:
+	if _import_all_panel == null or not is_instance_valid(_import_all_panel):
+		return
+
+	var selecionado: bool = _music_cursor == IMPORT_ALL_INDEX
+
+	if _batch_active:
+		_import_all_label.text = "IMPORTANDO %d/%d   •   VOLTAR CANCELA" % [
+			mini(_batch_position + 1, _batch_total),
+			_batch_total,
+		]
+	elif novas > 0:
+		_import_all_label.text = "IMPORTAR TODAS   •   %d NOVA(S)" % novas
+	elif instaladas > 0 or invalidas > 0:
+		_import_all_label.text = "IMPORTAR TODAS   •   NADA NOVO"
+	else:
+		_import_all_label.text = "IMPORTAR TODAS   •   REESCANEAR"
+
+	_import_all_panel.add_theme_stylebox_override("panel", _row_style(selecionado))
+	_import_all_label.add_theme_color_override(
+		"font_color",
+		Color(1.0, 0.86, 0.20, 1.0)
+		if selecionado
+		else (
+			Color(0.42, 1.0, 0.68, 1.0)
+			if novas > 0
+			else Color(0.70, 0.78, 0.90, 1.0)
+		)
+	)
+	_fit_label_to_width(_import_all_label, int(_radius * 0.031), 10)
+
+
+func _texto_detalhe_lote(
+	novas: int,
+	instaladas: int,
+	invalidas: int
+) -> String:
+	if _batch_active:
+		return (
+			"Importando o pendrive inteiro. Não retire o pendrive. "
+			+ "VOLTAR interrompe — o que já entrou continua instalado."
+		)
+
+	if novas <= 0 and invalidas <= 0:
+		return (
+			"Todas as %d músicas do pendrive já estão na máquina." % instaladas
+			+ "   B reescaneia o pendrive."
+		)
+
+	var texto: String = "B importa as %d música(s) nova(s) de uma vez." % novas
+	if instaladas > 0:
+		texto += "   %d já instalada(s) serão puladas." % instaladas
+	if invalidas > 0:
+		texto += "   %d pasta(s) com erro serão listadas no final." % invalidas
+	return texto
 
 
 ## ---------------------------------------------------------------
@@ -1069,11 +1571,15 @@ func _cleanup_bpm_bus() -> void:
 		AudioServer.remove_bus(existing)
 
 
-func _start_bpm_analysis(package: Dictionary) -> void:
+## Devolve `true` quando a análise realmente começou. O lote depende
+## dessa resposta: um MP3 ilegível precisa virar falha registrada, não
+## uma chamada repetida a cada quadro.
+func _start_bpm_analysis(package: Dictionary) -> bool:
 	var audio_path: String = str(package.get("audio", ""))
 	if audio_path.is_empty() or not FileAccess.file_exists(audio_path):
+		_music_status.add_theme_color_override("font_color", Color(1.0, 0.42, 0.42, 1.0))
 		_music_status.text = "MP3 NÃO ENCONTRADO PARA ANÁLISE"
-		return
+		return false
 
 	if _bpm_player == null or not is_instance_valid(_bpm_player):
 		_ensure_bpm_analyzer()
@@ -1082,7 +1588,7 @@ func _start_bpm_analysis(package: Dictionary) -> void:
 	if stream == null:
 		_music_status.add_theme_color_override("font_color", Color(1.0, 0.42, 0.42, 1.0))
 		_music_status.text = "NÃO FOI POSSÍVEL ABRIR O MP3"
-		return
+		return false
 
 	_bpm_pending_package = package.duplicate(true)
 	_bpm_analysis_active = true
@@ -1104,6 +1610,7 @@ func _start_bpm_analysis(package: Dictionary) -> void:
 	_music_status.add_theme_color_override("font_color", Color(1.0, 0.84, 0.24, 1.0))
 	_music_status.text = "ANALISANDO BPM... 0%"
 	_music_detail.text = "O áudio está sendo analisado em silêncio. Não retire o pendrive."
+	return true
 
 
 func _process_bpm_analysis(delta: float) -> void:
@@ -1149,7 +1656,11 @@ func _process_bpm_analysis(delta: float) -> void:
 		0,
 		100
 	)
-	_music_status.text = "ANALISANDO BPM... %d%%" % progress
+	_music_status.text = (
+		("LOTE %d/%d   •   " % [mini(_batch_position + 1, _batch_total), _batch_total])
+		if _batch_active
+		else ""
+	) + "ANALISANDO BPM... %d%%" % progress
 
 	if (
 		_bpm_analysis_elapsed >= BPM_ANALYSIS_SECONDS
@@ -1166,6 +1677,17 @@ func _finish_bpm_analysis() -> void:
 	_bpm_analysis_active = false
 
 	if bpm < 40.0:
+		if _batch_active:
+			var recusado: Dictionary = _bpm_pending_package.duplicate(true)
+			_batch_failures.append(
+				_descricao_falha(recusado, "BPM não detectado")
+			)
+			USER_CATALOG.import_log_record(recusado, "erro", "BPM não detectado")
+			_bpm_pending_package.clear()
+			_batch_position += 1
+			_refresh_music_view()
+			return
+
 		_music_status.add_theme_color_override("font_color", Color(1.0, 0.55, 0.28, 1.0))
 		_music_status.text = "BPM NÃO CONFIÁVEL — USE TBPM NO MP3 OU bpm= NO TXT"
 		_music_detail.text = (
@@ -1175,6 +1697,15 @@ func _finish_bpm_analysis() -> void:
 		return
 
 	_bpm_pending_package["bpm"] = bpm
+
+	if _batch_active:
+		var pacote: Dictionary = _bpm_pending_package.duplicate(true)
+		_bpm_pending_package.clear()
+		_registrar_resultado_lote(pacote, _importar_pacote_resultado(pacote, bpm))
+		_batch_position += 1
+		_refresh_music_view()
+		return
+
 	_music_status.text = "BPM DETECTADO: %d" % roundi(bpm)
 	_import_package(_bpm_pending_package, bpm)
 
@@ -1458,11 +1989,10 @@ func _close_test_view() -> void:
 	_panel.visible = true
 	_set_touch_back_visible(false)
 
-	var client := get_node_or_null("/root/LedClient")
-	if client != null and client.has_method("clear_all"):
-		client.call("clear_all")
-	if client != null and client.has_method("begin_menu"):
-		client.call("begin_menu")
+	# O teste deixa lanes acesas uma a uma; o trio do menu so volta
+	# depois de apagar tudo.
+	LED_CLIENT.clear_all()
+	_agendar_leds_menu()
 
 	for i in range(_lane_pressed_state.size()):
 		_lane_pressed_state[i] = false

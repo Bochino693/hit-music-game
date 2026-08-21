@@ -246,6 +246,30 @@ func begin_stage() -> void:
 	_last_ui_state = ""
 
 
+## Entrada nas Configuracoes. A tela anterior (abertura/seletor/partida)
+## deixa um estado seu gravado em ui_state.cmd — ATTRACT, MENU da musica
+## escolhida ou o ultimo MULTI do jogo. Sem cancelar esse estado, a mesa
+## continuava rodando a animacao da tela ANTERIOR enquanto o operador ja
+## estava no painel: os LEDs do menu de Configuracoes nunca apareciam.
+##
+## Aqui a serial e devolvida a um estado neutro (CLEAR) e o modo volta
+## para NORMAL — que e o modo do seletor, o unico onde convivem o quadro
+## MENU persistente e os flashes HIT de navegacao. Quem chama envia o
+## proprio quadro logo depois (ver config.gd/_aplicar_leds_menu).
+func begin_settings() -> void:
+	ensure_bridge()
+
+	_mode = LedMode.NORMAL
+	_leave_game_mode()
+	_clear_transient_queue()
+	_last_game_state = ""
+
+	# Forca a escrita mesmo que a tela anterior ja tenha mandado CLEAR:
+	# o proximo quadro precisa sair da fila com a mesa apagada.
+	_last_ui_state = ""
+	_write_ui_state("CLEAR")
+
+
 func begin_game() -> void:
 	ensure_bridge()
 

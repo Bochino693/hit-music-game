@@ -91,6 +91,17 @@ func _apply_scene_led_theme() -> void:
 
 
 func _publish_game_frame_r21() -> void:
+	var frame := _quadro_das_lanes_r21()
+
+	var client := _led_client_r21()
+	if client != null and client.has_method("send_state"):
+		client.call("send_state", frame)
+
+
+## Monta o quadro MULTI das 8 lanes a partir dos eventos vivos. Separado
+## do envio para poder ser conferido sem mesa ligada (ver
+## tools/smoke_final.tscn): e aqui que se prova que arrasto nao acende.
+func _quadro_das_lanes_r21() -> String:
 	var colors: Array[Color] = []
 	var best_distance: Array[float] = []
 	var hold_active: Array[bool] = []
@@ -111,44 +122,17 @@ func _publish_game_frame_r21() -> void:
 
 		var type_name := str(event.get("type", "tap")).to_lower()
 
-		# Arrasto guia os botões: no gabinete não existe ponteiro, então o
-		# percurso é feito apertando as lanes do caminho em ordem. Antes de
-		# começar acende a lane de partida; em curso, acende SÓ o próximo
-		# ponto — é o que diz ao jogador para onde arrastar.
-		if type_name == "slide" or type_name == "drag" or type_name == "swipe":
-			var slide_lane := -1
-			var slide_active := bool(event.get("_active", false))
-
-			if slide_active:
-				var gate := _next_slide_gate(event)
-				if not gate.is_empty():
-					slide_lane = int(gate.get("lane", -1))
-			else:
-				var path_value: Variant = event.get("path", [])
-				if path_value is Array and not (path_value as Array).is_empty():
-					slide_lane = int((path_value as Array)[0])
-
-			if slide_lane < 0 or slide_lane > 7:
-				continue
-			if hold_active[slide_lane]:
-				continue
-
-			var slide_start := _event_start_time(event)
-			var slide_distance := 0.0
-			if slide_active:
-				if _song_time > _event_end_time(event, slide_start) + LED_LATE_SECONDS:
-					continue
-			else:
-				var slide_dt := slide_start - _song_time
-				if _dt_out_of_led_range(slide_dt):
-					continue
-				slide_distance = absf(slide_dt)
-
-			if slide_distance < best_distance[slide_lane]:
-				best_distance[slide_lane] = slide_distance
-				colors[slide_lane] = _event_color(event)
-			continue
-
+		# ARRASTO NAO ACENDE LED NENHUM.
+		#
+		# Antes o botao da lane de partida (e depois o do proximo ponto do
+		# caminho) acendia, porque o percurso podia ser feito apertando as
+		# lanes em ordem. Isso convidava ao atalho que agora nao existe
+		# mais: apertar A e depois B fechava a nota sem desenhar nada.
+		#
+		# O arrasto e um gesto da moldura touch — quem mostra o caminho e
+		# a tela, com o traco, as setas e a estrela. A mesa fica apagada
+		# de proposito: LED aceso ali seria um convite a apertar o botao,
+		# que agora nao faz efeito.
 		if type_name != "tap" and type_name != "hold":
 			continue
 
@@ -188,15 +172,7 @@ func _publish_game_frame_r21() -> void:
 			best_distance[lane] = distance
 			colors[lane] = _event_color(event)
 
-	var frame := _multi_command_r21(colors)
-
-	var client := _led_client_r21()
-	if client != null and client.has_method("send_state"):
-		client.call("send_state", frame)
-
-
-func _dt_out_of_led_range(dt: float) -> bool:
-	return dt > LED_PRELIGHT_SECONDS or dt < -LED_LATE_SECONDS
+	return _multi_command_r21(colors)
 
 
 func _multi_command_r21(colors: Array[Color]) -> String:

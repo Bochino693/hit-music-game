@@ -15,13 +15,14 @@ func _ready() -> void:
 	_difficulty_confirmed = false
 	_display_score = 0.0
 	_select_difficulty("easy", true)
+	_centralizar_botao_voltar()
 
 	if _pre_game_title != null:
 		_pre_game_title.text = "ESCOLHA A DIFICULDADE"
 	if _pre_game_subtitle != null:
 		_pre_game_subtitle.text = (
-			"A / E: MOVER     B: SELECIONAR\n"
-			+ "TOQUE EM FACIL OU DIFICIL PARA INICIAR"
+			"A SOBE     E DESCE     B CONFIRMA\n"
+			+ "FACIL   •   DIFICIL   •   VOLTAR PARA TROCAR DE MUSICA"
 		)
 
 	_update_pre_game_styles()
@@ -37,18 +38,17 @@ func _ready() -> void:
 	_apply_menu_leds()
 
 
+## A sobe, E desce, B confirma — exatamente como no seletor de musicas e
+## nas Configuracoes. O cursor passeia por FACIL, DIFICIL e VOLTAR, entao
+## desistir da musica usa os mesmos tres botoes acesos na mesa: nao existe
+## um quarto botao apagado que o jogador teria que adivinhar.
 func _process_pre_game_inputs() -> void:
-	# input_e e o mesmo botao fisico de DESCER usado no seletor de
-	# musicas (ver DOWN_ACTION em selector.gd), entao ele tambem move o
-	# cursor aqui — o jogador nao precisa trocar de botao entre telas.
-	if _action_pressed("input_a") or _action_pressed("input_e"):
-		_move_difficulty_cursor()
-	elif _action_pressed("input_b"):
-		_confirm_difficulty()
-	elif _action_pressed("ui_down"):
-		_move_difficulty_cursor()
-	elif _action_pressed("ui_accept"):
-		_confirm_difficulty()
+	if _action_pressed("input_a") or _action_pressed("ui_up") or _action_pressed("ui_left"):
+		_move_difficulty_cursor(-1)
+	elif _action_pressed("input_e") or _action_pressed("ui_down") or _action_pressed("ui_right"):
+		_move_difficulty_cursor(1)
+	elif _action_pressed("input_b") or _action_pressed("ui_accept"):
+		_confirmar_item_do_cursor()
 
 
 func _handle_pre_game_touch(
@@ -76,6 +76,12 @@ func _handle_pre_game_touch(
 		_difficulty_cursor = 1
 		_select_difficulty("hard")
 		_confirm_difficulty()
+		return
+
+	if _toque_no_voltar(position_value):
+		_difficulty_cursor = BACK_CURSOR
+		_update_pre_game_styles()
+		_voltar_para_selecao()
 
 
 ## Trio de LEDs dos menus (A = mover, B = selecionar, E = descer).
@@ -91,21 +97,63 @@ func _apply_menu_leds() -> void:
 	)
 
 
-func _move_difficulty_cursor() -> void:
+## Itens da tela, na ordem em que o cursor anda: FACIL, DIFICIL, VOLTAR.
+const CURSOR_ITEM_COUNT: int = 3
+const BACK_CURSOR: int = 2
+
+
+func _centralizar_botao_voltar() -> void:
+	# Nesta cadeia o JOGAR nao aparece (confirmar e o proprio B), entao o
+	# VOLTAR assume a linha inteira, centralizado.
+	if _back_button == null or not is_instance_valid(_back_button):
+		return
+	if _pre_game_panel == null or not is_instance_valid(_pre_game_panel):
+		return
+
+	var panel_size: Vector2 = _pre_game_panel.size
+	_back_button.size = Vector2(
+		panel_size.x * 0.42,
+		panel_size.y * 0.185
+	)
+	_back_button.position = Vector2(
+		(panel_size.x - _back_button.size.x) * 0.5,
+		panel_size.y * 0.665
+	)
+
+	if _back_button_label != null and is_instance_valid(_back_button_label):
+		_back_button_label.size = _back_button.size
+
+
+func _move_difficulty_cursor(direction: int = 1) -> void:
 	_difficulty_cursor = (
 		0
 		if _difficulty_cursor < 0
-		else (_difficulty_cursor + 1) % 2
+		else posmod(_difficulty_cursor + direction, CURSOR_ITEM_COUNT)
 	)
 
-	_select_difficulty(
-		"easy"
-		if _difficulty_cursor == 0
-		else "hard"
-	)
+	# VOLTAR nao mexe na dificuldade: sair da linha do VOLTAR devolve
+	# exatamente o nivel que estava marcado.
+	if _difficulty_cursor != BACK_CURSOR:
+		_select_difficulty(
+			"easy"
+			if _difficulty_cursor == 0
+			else "hard"
+		)
+	else:
+		_update_pre_game_styles()
 
 	LED_CLIENT.menu_next_feedback()
 	_apply_menu_leds()
+
+
+## B confirma o item onde o cursor estiver.
+func _confirmar_item_do_cursor() -> void:
+	if _difficulty_cursor == BACK_CURSOR:
+		LED_CLIENT.menu_select_feedback()
+		_voltar_para_selecao()
+		return
+
+	_confirm_difficulty()
 
 
 func _confirm_difficulty() -> void:
@@ -164,6 +212,7 @@ func _update_pre_game_styles() -> void:
 
 	var easy_selected: bool = _difficulty_cursor == 0
 	var hard_selected: bool = _difficulty_cursor == 1
+	_aplicar_estilo_voltar(_difficulty_cursor == BACK_CURSOR)
 
 	_easy_button.add_theme_stylebox_override(
 		"panel",

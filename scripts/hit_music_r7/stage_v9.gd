@@ -25,6 +25,12 @@ var _easy_button_label: Label
 var _hard_button_label: Label
 var _play_button: Panel
 var _play_button_label: Label
+var _back_button: Panel
+var _back_button_label: Label
+
+## Trava do VOLTAR: a troca de cena leva alguns quadros e sem isto um
+## toque duplo (ou o botao segurado) disparava duas trocas.
+var _voltando: bool = false
 
 var _center_hud: Control
 var _center_score: Label
@@ -132,10 +138,9 @@ func _prepare_chart() -> void:
 			)
 			event["_path_points"] = path_points
 			# Mesmo pre-calculo do stage base: o comprimento acumulado
-			# evita refazer a soma do trajeto inteiro a cada amostra, e os
-			# gates permitem concluir o arrasto pelos botoes fisicos.
+			# evita refazer a soma do trajeto inteiro a cada amostra do
+			# corredor.
 			event["_path_lengths"] = PATH_BUILDER.build_lengths(path_points)
-			event["_lane_gates"] = _build_lane_gates(event, path_points)
 			event["_last_pointer"] = (
 				path_points[0] if path_points.size() > 0 else _center
 			)
@@ -180,6 +185,30 @@ func _handle_pre_game_touch(position_value: Vector2) -> void:
 		).has_point(position_value)
 	):
 		_confirm_difficulty()
+		return
+
+	if _toque_no_voltar(position_value):
+		_voltar_para_selecao()
+
+
+## O VOLTAR e sempre a mesma area de toque, aqui e na cadeia final.
+func _toque_no_voltar(position_value: Vector2) -> bool:
+	if _back_button == null or not is_instance_valid(_back_button):
+		return false
+	if not _back_button.visible:
+		return false
+	return _back_button.get_global_rect().has_point(position_value)
+
+
+## Desiste da musica e volta ao seletor. Nenhuma ficha foi consumida
+## ainda, entao nao ha nada para devolver.
+func _voltar_para_selecao() -> void:
+	if _voltando or _difficulty_confirmed:
+		return
+	_voltando = true
+
+	LED_CLIENT.menu_select_feedback()
+	_go_to_selector()
 
 
 func _select_difficulty(name_value: String, immediate: bool = false) -> void:
@@ -380,6 +409,42 @@ func _build_pre_game_overlay() -> void:
 	)
 	_play_button_label.size = _play_button.size
 	_play_button.add_child(_play_button_label)
+
+	# VOLTAR: a musica ja foi escolhida no seletor, mas errar a escolha e
+	# comum — e ate aqui nenhuma ficha foi gasta (quem gasta e
+	# _confirm_difficulty). Sem este botao a unica saida era jogar a
+	# musica errada ate o fim.
+	_back_button = Panel.new()
+	_back_button.position = Vector2(
+		panel_size.x * 0.535,
+		panel_size.y * 0.665
+	)
+	_back_button.size = Vector2(
+		panel_size.x * 0.38,
+		panel_size.y * 0.185
+	)
+	_pre_game_panel.add_child(_back_button)
+
+	_back_button_label = _make_label(
+		"VOLTAR",
+		int(_radius * 0.040),
+		HORIZONTAL_ALIGNMENT_CENTER,
+		font
+	)
+	_back_button_label.size = _back_button.size
+	_back_button.add_child(_back_button_label)
+
+	# Com o VOLTAR ocupando a direita, o JOGAR fica na esquerda da mesma
+	# linha (a cadeia final esconde o JOGAR e recentraliza o VOLTAR).
+	_play_button.position = Vector2(
+		panel_size.x * 0.085,
+		panel_size.y * 0.665
+	)
+	_play_button.size = Vector2(
+		panel_size.x * 0.38,
+		panel_size.y * 0.185
+	)
+	_play_button_label.size = _play_button.size
 
 
 func _build_center_hud() -> void:
@@ -730,6 +795,7 @@ func _update_pre_game_styles() -> void:
 		"panel",
 		_play_button_style()
 	)
+	_aplicar_estilo_voltar(false)
 
 	_easy_button_label.add_theme_color_override(
 		"font_color",
@@ -743,6 +809,30 @@ func _update_pre_game_styles() -> void:
 		if not easy_selected
 		else Color(0.58, 0.65, 0.76, 1.0)
 	)
+
+
+## Mesmo desenho dos botoes de dificuldade (mesma borda, mesmo raio,
+## mesmo brilho quando selecionado), so que na cor de atencao — para o
+## VOLTAR pertencer ao painel sem ser confundido com "jogar".
+const BACK_BUTTON_COLOR: Color = Color(1.0, 0.36, 0.42, 1.0)
+
+
+func _aplicar_estilo_voltar(selected: bool) -> void:
+	if _back_button == null or not is_instance_valid(_back_button):
+		return
+
+	_back_button.add_theme_stylebox_override(
+		"panel",
+		_difficulty_button_style(selected, BACK_BUTTON_COLOR)
+	)
+
+	if _back_button_label != null and is_instance_valid(_back_button_label):
+		_back_button_label.add_theme_color_override(
+			"font_color",
+			Color.WHITE
+			if selected
+			else Color(0.58, 0.65, 0.76, 1.0)
+		)
 
 
 func _pre_game_panel_style() -> StyleBoxFlat:

@@ -30,6 +30,12 @@ extends RefCounted
 const FACTORY_CATALOG_PATH: String = "res://data/hit_music_songs.json"
 
 const USER_SONGS_PATH: String = "user://hit_music_user_songs.json"
+
+## Histórico de importação por pacote (pendrive). Guarda o resultado da
+## última tentativa de cada pasta para que uma nova importação em lote
+## saiba o que já entrou, o que falhou e por quê.
+const IMPORT_LOG_PATH: String = "user://hit_music_import_log.json"
+const IMPORT_LOG_LIMIT: int = 400
 const USER_SONGS_BACKUP_PATH: String = "user://hit_music_user_songs.json.bak"
 const USER_SONGS_TEMP_PATH: String = "user://hit_music_user_songs.json.tmp"
 
@@ -680,6 +686,24 @@ static func scan_usb_packages() -> Array:
 		return str(a.get("name", "")).nocasecmp_to(str(b.get("name", ""))) < 0
 	)
 
+	# Histórico das tentativas anteriores: é o que permite refazer uma
+	# importação em lote sem repetir o que já entrou e sem esquecer o que
+	# falhou da última vez.
+	var log: Dictionary = import_log()
+	for package_value in packages:
+		if not (package_value is Dictionary):
+			continue
+		var package: Dictionary = package_value as Dictionary
+		var entry: Variant = log.get(import_log_key(package), null)
+		if entry is Dictionary:
+			package["log_status"] = str((entry as Dictionary).get("status", ""))
+			package["log_message"] = str((entry as Dictionary).get("message", ""))
+			package["log_time"] = int((entry as Dictionary).get("time", 0))
+		else:
+			package["log_status"] = ""
+			package["log_message"] = ""
+			package["log_time"] = 0
+
 	return packages
 
 
@@ -719,11 +743,23 @@ static func _append_package_if_present(
 
 	var package: Dictionary = inspect_usb_package(folder, installed_index)
 
-	# Qualquer pasta que não seja um pacote completo é ignorada.
-	if package.is_empty() or not bool(package.get("valid", false)):
+	# Pasta sem nenhum arquivo de pacote não é assunto do Hit Music.
+	if package.is_empty():
 		return
 
 	package["drive"] = drive_name
+
+	# Pacote incompleto NÃO é mais escondido. Antes ele sumia da lista e o
+	# operador ficava sem saber por que a música não aparecia; agora entra
+	# marcado como ERRO, com o motivo, e a importação em lote consegue
+	# avisar exatamente quais pastas não estão funcionando.
+	if not bool(package.get("valid", false)):
+		if str(package.get("name", "")).strip_edges().is_empty():
+			package["name"] = folder.get_file()
+		package["installed"] = false
+		package["installed_match"] = {}
+		package["bpm"] = 0.0
+
 	packages.append(package)
 
 
@@ -841,6 +877,80 @@ static func inspect_usb_package(
 		"error": "",
 		"metadata": metadata,
 	}
+
+
+## ---------------------------------------------------------------
+## HISTORICO DE IMPORTACAO
+## ---------------------------------------------------------------
+
+## Chave estável de um pacote. O hash do MP3 identifica a música mesmo
+## que o operador renomeie a pasta; sem hash (pacote inválido) vale o
+## caminho da pasta.
+static func import_log_key(package: Dictionary) -> String:
+	var hash_value: String = str(package.get("source_hash", "")).strip_edges()
+	if not hash_value.is_empty():
+		return "hash:" + hash_value
+	return "pasta:" + str(package.get("folder", "")).to_lower()
+
+
+static func import_log() -> Dictionary:
+	if not FileAccess.file_exists(IMPORT_LOG_PATH):
+		return {}
+
+	var file := FileAccess.open(IMPORT_LOG_PATH, FileAccess.READ)
+	if file == null:
+		return {}
+
+	var text: String = file.get_as_text()
+	file.close()
+
+	var parsed: Variant = JSON.parse_string(text)
+	if parsed is Dictionary:
+		return parsed as Dictionary
+	return {}
+
+
+static func import_log_entry(package: Dictionary) -> Dictionary:
+	var entry: Variant = import_log().get(import_log_key(package), null)
+	if entry is Dictionary:
+		return entry as Dictionary
+	return {}
+
+
+## status: "ok", "duplicada" ou "erro".
+static func import_log_record(
+	package: Dictionary,
+	status: String,
+	message: String = ""
+) -> void:
+	var log: Dictionary = import_log()
+
+	log[import_log_key(package)] = {
+		"name": str(package.get("name", "")),
+		"folder": str(package.get("folder", "")),
+		"status": status,
+		"message": message,
+		"time": int(Time.get_unix_time_from_system()),
+	}
+
+	# O pendrive de um cliente grande passa por muitas máquinas: o
+	# histórico não pode crescer sem fim. Fica só o mais recente.
+	if log.size() > IMPORT_LOG_LIMIT:
+		var keys: Array = log.keys()
+		keys.sort_custom(func(a: Variant, b: Variant) -> bool:
+			return (
+				int((log[a] as Dictionary).get("time", 0))
+				< int((log[b] as Dictionary).get("time", 0))
+			)
+		)
+		for index in range(log.size() - IMPORT_LOG_LIMIT):
+			log.erase(keys[index])
+
+	var file := FileAccess.open(IMPORT_LOG_PATH, FileAccess.WRITE)
+	if file == null:
+		return
+	file.store_string(JSON.stringify(log, "\t"))
+	file.close()
 
 
 static func import_usb_package(

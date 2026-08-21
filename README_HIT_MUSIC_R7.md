@@ -24,9 +24,9 @@ This refactor keeps the original cabinet flow:
   Four arrow silhouettes and four star silhouettes rotate between slides; the
   color never changes family, only the shape does.
 - The slide star has its own draw physics: the mechanical progress may jump
-  (a button press advances straight to the next path point), but the drawn
-  progress chases it at a capped speed, so the star always travels the path
-  instead of teleporting. The rail and arrows fade in during the approach.
+  (a fast finger covers several samples in one frame), but the drawn progress
+  chases it at a capped speed, so the star always travels the path instead of
+  teleporting. The rail and arrows fade in during the approach.
 - Tazo colors follow the sprite sheet frame order: frame 0 yellow, frame 1 red,
   frame 2 cyan (`tap_palette.color_for_index`). Changing that order desyncs
   every effect from the art.
@@ -69,8 +69,15 @@ Gameplay:
 - `input_a` through `input_h`: TAP and HOLD lanes.
 - Touch/mouse: TAP, HOLD and SLIDE (the pointer has to sweep the whole
   corridor — jumping from start to end does not complete the note).
-- SLIDE on the cabinet: press the path lanes in order. The LED lights only the
-  next lane of the path, so the drag is playable without a touch screen.
+- SLIDE is a **gesture, not a button**. It only responds to the touch frame, and
+  only completes when the finger actually sweeps the corridor from one point to
+  the other (`_advance_slide_progress` samples the path between pointer positions
+  and stops advancing the moment a sample falls outside it). Physical buttons do
+  nothing to a slide: pressing the start lane and then the end lane used to close
+  the note without drawing anything, which is exactly the shortcut that is gone.
+  For the same reason a slide **lights no LED at all** — a lit button would be an
+  invitation to press it. The path is shown on screen: the trail, the arrows and
+  the star.
 - Result modal: START (or a tap) takes the highlighted action, B opens the song
   selector. When the countdown runs out with nothing chosen, the game returns to
   the opening screen.
@@ -82,6 +89,20 @@ Gameplay:
 The down button in the menus is `input_e` (physical lane 4). It is defined once,
 in `led_client.gd` (`NAV_DOWN_ACTION` / `NAV_DOWN_LANE`), and the song selector,
 the difficulty screen and their LEDs all read from there.
+
+Difficulty screen (the mode screen): the cursor walks through **FACIL,
+DIFICIL and VOLTAR** with the same three lit buttons as everywhere else —
+`input_a` up, `input_e` down, `input_b` confirms — and the panel can also be
+touched directly. VOLTAR goes back to the song selector, which is the way out
+when the wrong song was picked. No credit is spent up to that point:
+`_confirm_difficulty` is what consumes it.
+
+Settings screen (F9 / SELECT): the same three buttons stay lit on the table
+(A up, B start/confirm, E down). Entering the panel hands the serial over —
+`LedClient.begin_settings()` drops the previous screen's state (the opening
+writes `ATTRACT`) with a `CLEAR`, and the menu frame goes out right after it,
+far enough apart for the bridge to see both. Leaving clears the table again so
+the next screen writes its own frame in `_ready()`.
 
 Every song generates slides on both difficulties. `slide_every` / `hold_every`
 from the JSON now act as *weights* in the phrase draw rather than a fixed
@@ -124,6 +145,122 @@ factory list — same selector, same ranking, same chart generation. Colors are
 sampled from the cover when there is one. All operator songs share
 `scenes/user_song.tscn`, which resolves which song to play from the tree meta,
 because a new `.tscn` cannot be generated at runtime.
+
+### Importing a whole pen drive
+
+The music screen lists every folder found on the removable drives and keeps
+**IMPORTAR TODAS** as the first stop of the cursor. It imports the entire pen
+drive in one go — one package per frame, so the panel keeps drawing and the
+counter moves — and VOLTAR interrupts it at any point without losing what
+already went in.
+
+- Folders that are not valid packages are no longer hidden. They show up in the
+  list as `ERRO` with what is missing (`1 OGV`, `ARQUIVO EXTRA`, `TXT SEM
+  name="..."`) and are named again in the report at the end of the batch.
+- Packages already on the machine are skipped and counted, never imported
+  twice: the match is by audio hash, package id or title.
+- Every attempt is written to `user://hit_music_import_log.json`
+  (`user_catalog.import_log_record`). Running the batch again after swapping the
+  pen drive, or after a cancel, picks up exactly where it stopped, and a package
+  that failed before is flagged as `FALHOU ANTES` in the list.
+- Packages without BPM in the file still go through the 16 s audio analysis; the
+  batch waits for it and carries on by itself.
+
+## Long song names
+
+The operator names songs freely, and pen drive packages usually arrive with the
+full title (`EVANGELION - A CRUEL ANGEL'S THESIS (OPENING COMPLETO)`). Shrinking
+the font was not enough, because of how Godot sizes labels:
+
+> A `Label` placed by hand — not inside a container — never accepts being smaller
+> than the text it carries. `size` is always raised to the minimum computed from
+> the content, and `clip_text` then clips nothing, because everything fits inside
+> that inflated rectangle. A 74-character title ended up **659 px wide inside a
+> 94 px card**, crossing the list and landing on top of the info panel.
+
+`text_fit.gd` fixes it by shortening the text instead of trusting the clip. Order:
+shrink the font to fit one line; if it still doesn't fit at the minimum size, wrap
+into **two** lines when the box is tall enough; otherwise cut with an ellipsis —
+a cut the player understands, unlike half a letter. The original text is kept in
+the label's meta, so a later re-fit starts from the full name, and the `size` is
+applied twice (once directly, once deferred) because Godot recomputes a label's
+minimum size one idle frame later.
+
+It is used by the selector cards and info panel, the in-game HUD title (two lines
+inside its reserved box, above the difficulty row) and the new-record panel.
+
+## No mouse pointer, anywhere
+
+The table has no mouse — the touch frame emulates one. A single screen asking for
+`MOUSE_MODE_VISIBLE` was enough to leave a white arrow parked on the glass where
+the last finger touched, and `stage.gd` did exactly that, which is why the pointer
+only ever showed up **during a song**. That call is gone (so is the one in the
+legacy `selector.gd`), and `arcade_shell.gd` now enforces it for the whole game:
+`MOUSE_MODE_HIDDEN` is re-asserted every frame (a cheap enum read; it only writes
+when something changed), and every cursor shape gets a fully transparent image at
+startup, so even a one-frame slip shows nothing. Touch feedback during a song is
+the game's own, drawn by the playfield.
+
+## Kiosk and the touch frame
+
+The cabinet is a table with an IR touch frame: the player rests a hand on the
+glass, brushes the edge, holds a finger still. Windows answers each of those
+with something drawn **on top of the running song** — the gray contact circle,
+the press-and-hold right-click ring, the Action Center sliding in from the
+edge, an update toast, the pen drive AutoPlay window, the touch keyboard. None
+of that can be removed from game code; they are Windows settings.
+
+`QUIOSQUE_HIT_MUSIC.ps1` (project root, next to the LED bridge) turns them off:
+
+| what | where |
+| --- | --- |
+| gray contact circle | `Control Panel\Cursors` → `ContactVisualization` |
+| gesture trails | `Control Panel\Cursors` → `GestureVisualization` |
+| hold = right click | `Wisp\Touch` → `TouchMode_hold` |
+| toasts / notifications | `PushNotifications` → `ToastEnabled` (+ `NOC_GLOBAL_SETTING_TOASTS_ENABLED`) |
+| pen drive AutoPlay window | `Explorer\AutoplayHandlers` → `DisableAutoplay` |
+| touch keyboard | `TabletTip\1.7` → `EnableDesktopModeAutoInvoke` |
+| screen saver, sleep, monitor off | `Control Panel\Desktop` + `powercfg` |
+| edge swipe (Action Center) | `Policies\...\EdgeUI` → `AllowEdgeSwipe` (needs admin) |
+
+Everything is per-user (`HKCU`) except the edge swipe, which is a machine
+policy: without admin that single item is skipped and reported. The visual
+settings are also pushed through `SystemParametersInfo`, so they take effect
+immediately instead of at the next sign-in. The previous value of every item is
+saved to `%APPDATA%\Hit Music\quiosque_backup.json`, and `-Restaurar` puts the
+machine back:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\QUIOSQUE_HIT_MUSIC.ps1 -Restaurar
+```
+
+`arcade_shell.gd` runs the script once at startup (Windows only, hidden window,
+non-blocking) using the same res:// → user:// extraction as the LED bridge, so
+it works from the exported .exe. The window itself now starts as exclusive
+fullscreen, borderless and always-on-top from `project.godot` instead of only
+being promoted at runtime, and the shell re-asserts foreground every 0.35 s —
+on a touch table nobody clicks the game window back, they just watch the song
+disappear.
+
+
+### Smoke test
+
+```powershell
+godot --headless --path . res://tools/smoke_final.tscn
+```
+
+Checks the VOLTAR on the mode screen, the A/E/B LEDs plus the serial handover in
+Settings, the batch import (including the second pass, which must import nothing
+and count the songs already installed), the kiosk settings — window flags, the
+re-assert interval, and that the script still turns off every item in the table
+above — long-name fitting, the pointer rule, and the slide rule: a physical
+button neither starts nor completes a slide, a swept finger does, and a slide
+never lights a lane. It prints `SMOKE_FINAL_OK`.
+
+Run it with a window (`xvfb-run` on Linux, or just the editor build on the
+cabinet) to also cover the live pointer check: a headless display server does not
+keep a mouse mode, so that one assertion reports itself as skipped instead of
+failing.
 
 ## Song catalog
 

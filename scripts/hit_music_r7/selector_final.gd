@@ -4,6 +4,7 @@ const CATALOG: Script = preload("res://scripts/hit_music_r7/catalog.gd")
 const LED_CLIENT: Script = preload("res://scripts/hit_music_r7/led_client.gd")
 const TAP_PALETTE: Script = preload("res://scripts/hit_music_r7/tap_palette.gd")
 const USER_CATALOG: Script = preload("res://scripts/hit_music_r7/user_catalog.gd")
+const TEXT_FIT: Script = preload("res://scripts/hit_music_r7/text_fit.gd")
 
 const TOP_MARGIN_RATIO: float = 0.022
 const TOP_HEIGHT_RATIO: float = 0.205
@@ -638,9 +639,24 @@ func _build_cards(font: Font) -> void:
 			font
 		)
 		label.position = Vector2(text_x, card.size.y * 0.30)
-		label.size = Vector2(card.size.x - text_x - card.size.x * 0.035, card.size.y * 0.66)
-		label.clip_text = true
-		_fit_label_to_width(label, label.size.x, int(_radius * 0.043), int(_radius * 0.023))
+		# A caixa reservada e esta, e nao o `label.size` lido de volta: um
+		# Label fora de container CRESCE ate caber o texto, entao ler a
+		# largura dele depois devolveria a largura do nome, nao a do card.
+		var label_box := Vector2(
+			card.size.x - text_x - card.size.x * 0.035,
+			card.size.y * 0.66
+		)
+		# O card tem altura para duas linhas: um nome comprido desce em vez
+		# de atravessar o card do vizinho.
+		TEXT_FIT.definir(
+			label,
+			str(song.get("title", "TRACK")),
+			label_box.x,
+			label_box.y,
+			int(_radius * 0.043),
+			int(_radius * 0.021),
+			true
+		)
 		card.add_child(label)
 
 		_cards.append(card)
@@ -718,8 +734,12 @@ func _build_info_panel(font: Font) -> void:
 		font
 	)
 	_song_name.position = Vector2(_info_panel.size.x * 0.055, _info_panel.size.y * 0.432)
-	_song_name.size = Vector2(_info_panel.size.x * 0.89, _info_panel.size.y * 0.156)
-	_song_name.autowrap_mode = TextServer.AUTOWRAP_OFF
+	# A caixa fica entre CATEGORIA e BPM: o nome pode usar duas linhas
+	# dentro dela, nunca passar por cima dos vizinhos. Fica no meta porque
+	# o `size` do Label acompanha o texto e nao serve como referencia.
+	var caixa_nome := Vector2(_info_panel.size.x * 0.89, _info_panel.size.y * 0.156)
+	_song_name.size = caixa_nome
+	_song_name.set_meta("caixa", caixa_nome)
 	_song_name.clip_text = true
 	_info_panel.add_child(_song_name)
 
@@ -845,12 +865,23 @@ func _apply_selection(immediate: bool) -> void:
 	_fit_label_to_width(_difficulty_label, _difficulty_label.size.x, int(_radius * 0.032), int(_radius * 0.023))
 	_category_label.text = "CATEGORIA  •  " + _song_category(song)
 	_fit_label_to_width(_category_label, _category_label.size.x, int(_radius * 0.034), int(_radius * 0.024))
-	_song_name.text = str(song.get("title", "TRACK"))
 	_bpm_label.text = "%d BPM" % int(round(float(song.get("bpm", 120.0))))
 	_record_label.text = "RECORDE FÁCIL   " + _best_record(song, "easy")
 	_hard_record_label.text = "RECORDE DIFÍCIL   " + _best_record(song, "hard")
 	_cover.texture = _load_texture(str(song.get("cover", "")))
-	_fit_label_to_width(_song_name, _song_name.size.x, int(_radius * 0.074), int(_radius * 0.035))
+	# Refeito a cada troca de musica: o nome que entra agora pode ser bem
+	# maior que o anterior. A caixa vem do meta gravado na construcao,
+	# porque `_song_name.size` ja pode ter sido inflado pelo nome anterior.
+	var caixa_nome: Vector2 = _song_name.get_meta("caixa", _song_name.size)
+	TEXT_FIT.definir(
+		_song_name,
+		str(song.get("title", "TRACK")),
+		caixa_nome.x,
+		caixa_nome.y,
+		int(_radius * 0.074),
+		int(_radius * 0.032),
+		true
+	)
 	_fit_label_to_width(_record_label, _record_label.size.x, int(_radius * 0.033), int(_radius * 0.024))
 	_fit_label_to_width(_hard_record_label, _hard_record_label.size.x, int(_radius * 0.033), int(_radius * 0.024))
 

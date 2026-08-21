@@ -1,5 +1,7 @@
 extends Control
 
+const TEXT_FIT: Script = preload("res://scripts/hit_music_r7/text_fit.gd")
+
 signal celebration_finished
 
 const DURATION: float = 3.65
@@ -77,8 +79,19 @@ func _build() -> void:
 
 	var track := _label(_song_title, int(_top_rect.size.y * 0.115), Color.WHITE, false)
 	track.position = Vector2(_top_rect.size.x * 0.05, _top_rect.size.y * 0.43)
-	track.size = Vector2(_top_rect.size.x * 0.90, _top_rect.size.y * 0.20)
 	top_panel.add_child(track)
+	# O nome vem do catalogo do operador e pode ser bem comprido: cabe
+	# entre "NOVO RECORDE" e a comparacao de porcentagem, em duas linhas
+	# se precisar, sem empurrar nenhuma das duas.
+	TEXT_FIT.definir(
+		track,
+		_song_title,
+		_top_rect.size.x * 0.90,
+		_top_rect.size.y * 0.20,
+		int(_top_rect.size.y * 0.115),
+		int(_top_rect.size.y * 0.052),
+		true
+	)
 
 	var comparison := _label(
 		"ANTERIOR %.2f%%   →   NOVO %.2f%%" % [_previous_best, _score],
@@ -204,6 +217,7 @@ func _label(text_value: String, font_size: int, color: Color, title: bool) -> La
 	label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.96))
 	label.add_theme_constant_override("outline_size", maxi(3, int(font_size * 0.11)))
 	label.clip_text = true
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	return label
 
 

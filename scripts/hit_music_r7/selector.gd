@@ -80,7 +80,8 @@ func _ready() -> void:
 	_input_armed = false
 	_input_release_time = 0.0
 	Engine.max_fps = 60
-	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	## Gabinete nao tem mouse: nenhuma tela pode devolver o ponteiro.
+	Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
 
 	_songs = CATALOG.all_songs()
 	if _songs.is_empty():

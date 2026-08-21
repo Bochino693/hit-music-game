@@ -8,6 +8,7 @@ const RENDERER_SCRIPT: Script = preload("res://scripts/hit_music_r7/playfield_re
 const LED_CLIENT: Script = preload("res://scripts/hit_music_r7/led_client.gd")
 const TAP_PALETTE: Script = preload("res://scripts/hit_music_r7/tap_palette.gd")
 const USER_CATALOG: Script = preload("res://scripts/hit_music_r7/user_catalog.gd")
+const TEXT_FIT: Script = preload("res://scripts/hit_music_r7/text_fit.gd")
 
 enum GameState {
 	PRESENTATION,
@@ -211,7 +212,12 @@ func _ready() -> void:
 	# conhecida e a nova, entao o corredor continua sendo varrido ponto
 	# a ponto.
 	Input.use_accumulated_input = true
-	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	## A mesa nao tem mouse: a moldura touch e que emula um. Deixar o
+	## ponteiro VISIVEL aqui punha uma seta branca no meio do campo assim
+	## que o jogador tirava o dedo do vidro — e como a cena da musica e a
+	## unica que ligava isso, a seta so aparecia DENTRO da partida.
+	## Esconder nao muda nada no toque: os eventos continuam chegando.
+	Input.set_mouse_mode(Input.MOUSE_MODE_HIDDEN)
 	_physical_lane_down.resize(NUM_LANES)
 	_physical_lane_down.fill(false)
 
@@ -415,16 +421,19 @@ func _build_hud() -> void:
 		font
 	)
 	_label_title.position = Vector2(inner_margin, height * 0.10)
-	_label_title.size = Vector2(title_width, height * 0.34)
-	_label_title.autowrap_mode = TextServer.AUTOWRAP_OFF
-	_label_title.clip_text = true
-	_label_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_top_panel.add_child(_label_title)
-	_fit_label_to_width(
+	# A caixa do titulo vai de 0.10 a 0.44 da altura do painel, e a
+	# dificuldade so comeca em 0.47: cabem duas linhas ali dentro sem
+	# encostar em nada. Um nome comprido encolhe, desce para a segunda
+	# linha e, no limite, sai com reticencias — nunca empurra o HUD.
+	TEXT_FIT.definir(
 		_label_title,
+		str(_song.get("title", "HIT MUSIC")),
 		title_width,
+		height * 0.34,
 		int(height * 0.24),
-		int(height * 0.13)
+		int(height * 0.105),
+		true
 	)
 
 	_label_difficulty = _make_label(
@@ -751,7 +760,6 @@ func _prepare_chart() -> void:
 			)
 			event["_path_points"] = path_points
 			event["_path_lengths"] = PATH_BUILDER.build_lengths(path_points)
-			event["_lane_gates"] = _build_lane_gates(event, path_points)
 			event["_last_pointer"] = (
 				path_points[0] if path_points.size() > 0 else _center
 			)
@@ -1290,9 +1298,6 @@ func _handle_lane_press(
 	has_pointer: bool = false,
 	press_position: Vector2 = Vector2.ZERO
 ) -> void:
-	if _advance_slide_with_lane(lane):
-		return
-
 	# Com a janela aberta desde o nascimento do tazo, varios objetos da
 	# mesma lane podem estar na tela ao mesmo tempo. Vence o mais proximo
 	# do proprio tempo, e nao o tipo que aparecer primeiro na lista: antes
@@ -1313,6 +1318,17 @@ func _handle_lane_press(
 				if int(event.get("lane", -1)) != lane:
 					continue
 			"slide":
+				# ARRASTO E GESTO, NAO BOTAO.
+				#
+				# O botao fisico nao abre nem avanca arrasto nenhum: sem
+				# ponteiro nao existe percurso, e apertar a lane de
+				# partida e a de chegada nao e "arrastar de um ponto ao
+				# outro" — era assim que o ponto saia sem o jogador
+				# desenhar nada. Ele so responde ao dedo na moldura
+				# touch, que precisa varrer o corredor inteiro (ver
+				# _advance_slide_progress).
+				if not has_pointer:
+					continue
 				if bool(event.get("_active", false)):
 					continue
 				var path_value: Variant = event.get("path", [])
@@ -1339,91 +1355,6 @@ func _handle_lane_press(
 			_begin_slide(best, source, has_pointer, press_position)
 		_:
 			_resolve_hit(best, "tap", _timing_quality(best_difference))
-
-
-## Arrasto no gabinete: sem tela sensivel ao toque nao existe ponteiro
-## para varrer o corredor, entao o percurso avanca apertando os botoes
-## das lanes do caminho, em ordem. Isso so vale para arrastos iniciados
-## por botao fisico — no toque/mouse continua valendo a varredura
-## completa de _advance_slide_progress, sem atalho.
-func _advance_slide_with_lane(lane: int) -> bool:
-	for event_value in _live_events:
-		var event: Dictionary = event_value as Dictionary
-		if bool(event.get("_resolved", false)):
-			continue
-		if str(event.get("type", "")) != "slide":
-			continue
-		if not bool(event.get("_active", false)):
-			continue
-		if not str(event.get("_source", "")).begins_with("lane_"):
-			continue
-
-		var gate: Dictionary = _next_slide_gate(event)
-		if gate.is_empty():
-			continue
-		if int(gate.get("lane", -1)) != lane:
-			continue
-
-		var gate_progress: float = float(gate.get("progress", 0.0))
-		event["_visual_progress"] = gate_progress
-		event["_last_pointer"] = _lane_positions[
-			clampi(lane, 0, _lane_positions.size() - 1)
-		]
-
-		if gate_progress >= SLIDE_COMPLETE_RATIO:
-			_resolve_hit(event, "slide", 1.0)
-		return true
-
-	return false
-
-
-## Proximo ponto do caminho que ainda falta ser tocado. Voltar ou pular
-## etapas nao conta: so o gate imediatamente a frente e aceito.
-func _next_slide_gate(event: Dictionary) -> Dictionary:
-	var gates_value: Variant = event.get("_lane_gates", [])
-	if not gates_value is Array:
-		return {}
-
-	var progress: float = float(event.get("_visual_progress", 0.0))
-	for gate_value in (gates_value as Array):
-		if not gate_value is Dictionary:
-			continue
-		var gate: Dictionary = gate_value as Dictionary
-		if float(gate.get("progress", 0.0)) > progress + 0.02:
-			return gate
-	return {}
-
-
-## Progresso de cada lane do caminho dentro da polilinha ja amostrada.
-## Serve tanto para o avanco por botao quanto para o LED indicar qual
-## e o proximo botao do arrasto.
-func _build_lane_gates(
-	event: Dictionary,
-	points: PackedVector2Array
-) -> Array:
-	var gates: Array = []
-	var lanes_value: Variant = event.get("path", [])
-	if not lanes_value is Array or points.size() < 2:
-		return gates
-
-	var last_index: int = points.size() - 1
-	for lane_value in (lanes_value as Array):
-		var lane_index: int = clampi(int(lane_value), 0, _lane_positions.size() - 1)
-		var target: Vector2 = _lane_positions[lane_index]
-		var best_progress: float = 0.0
-		var best_distance: float = INF
-		for index in range(points.size()):
-			var distance_value: float = points[index].distance_to(target)
-			if distance_value < best_distance:
-				best_distance = distance_value
-				best_progress = float(index) / float(last_index)
-		gates.append({"lane": lane_index, "progress": best_progress})
-
-	# O ultimo ponto do caminho fecha a nota, mesmo que a amostragem tenha
-	# parado alguns pixels antes da marca da lane.
-	if not gates.is_empty():
-		(gates[gates.size() - 1] as Dictionary)["progress"] = 1.0
-	return gates
 
 
 func _handle_lane_release(_lane: int, source: String) -> void:
