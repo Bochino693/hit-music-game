@@ -13,11 +13,11 @@ config_version=5
 config/name="Hit Music"
 run/main_scene="uid://n8scq8ls6ftf"
 run/print_header=false
+config/use_custom_user_dir=true
+config/custom_user_dir_name="Hit Music"
 config/features=PackedStringArray("4.6", "GL Compatibility")
 boot_splash/show_image=false
 config/icon="res://images/hit_music.png"
-config/use_custom_user_dir=true
-config/custom_user_dir_name="Hit Music"
 
 [autoload]
 
